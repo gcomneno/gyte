@@ -1,0 +1,13 @@
+# Output di lavoro
+*.vtt
+*.log
+*.tmp
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+
+# Python cache eventuale
+__pycache__/
+
