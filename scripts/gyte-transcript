@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "Uso: $0 URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
+  echo "Esempio: $0 'https://www.youtube.com/watch?v=XXXX'" >&2
+  exit 1
+fi
+
+URL="$1"
+shift || true
+
+# Lingue sottotitoli: default it,en ma modificabile via env
+SUB_LANGS="${YT_TRANSCRIPT_LANGS:-it,en}"
+
+# 1) Scarica SOLO sottotitoli (no media)
+#    (self-contained, nessun config esterno obbligatorio)
+yt-dlp \
+  --yes-playlist \
+  --skip-download \
+  --write-sub \
+  --write-auto-sub \
+  --sub-langs "$SUB_LANGS" \
+  --no-embed-subs \
+  -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
+  "$URL" "$@"
+
+# 2) Pulisci tutti i .vtt nella cartella corrente
+for f in *.vtt; do
+  [ -e "$f" ] || continue
+  out="${f%.vtt}.txt"
+
+  sed -E \
+    -e '/^WEBVTT/d' \
+    -e '/^Kind:/d' \
+    -e '/^Language:/d' \
+    -e '/^NOTE/d' \
+    -e '/-->/d' \
+    -e '/^[0-9]+$/d' \
+    -e 's/<[^>]+>//g' \
+    -e 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+    -e '/^[[:space:]]*$/d' \
+    "$f" | awk 'prev != $0 { if ($0 != "") print; prev = $0 }' > "$out"
+
+  echo "Creato: $out (da $f, che verrà eliminato)"
+  rm -- "$f"
+done
+
