@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Uso:
+#   gyte-reflow-text input.txt  > output.txt
+#   cat input.txt | gyte-reflow-text > output.txt
+
+if [ $# -gt 1 ]; then
+  echo "Uso: $0 [inputfile]" >&2
+  echo "  Se omesso o '-' legge da stdin" >&2
+  exit 1
+fi
+
+if [ $# -eq 0 ] || [ "$1" = "-" ]; then
+  INPUT="/dev/stdin"
+else
+  INPUT="$1"
+  if [ ! -f "$INPUT" ]; then
+    echo "Errore: file '$INPUT' non trovato." >&2
+    exit 1
+  fi
+fi
+
+tr -d '\r' < "$INPUT" \
+  | sed 's/^"//; s/"$//' \
+  | awk '
+    BEGIN { par = "" }
+    {
+      # Riga vuota => chiude paragrafo
+      if ($0 ~ /^[[:space:]]*$/) {
+        if (par != "") {
+          print par
+          print ""
+          par = ""
+        }
+      } else {
+        # Riga non vuota: accumula nel paragrafo corrente
+        gsub(/[[:space:]]+/, " ", $0)
+        if (par == "") par = $0
+        else par = par " " $0
+      }
+    }
+    END {
+      if (par != "") print par
+    }
+  ' \
+  | sed -E 's/[[:space:]]+/ /g' \
+  | sed -E 's/([.!?])\s*/\1\n/g'
+

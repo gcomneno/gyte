@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "Uso: $0 URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
+  echo "Esempio: $0 'https://www.youtube.com/watch?v=XXXX'" >&2
+  exit 1
+fi
+
+URL="$1"
+shift || true
+
+# Formato e qualità audio
+# Puoi cambiare via env: AUDIO_FORMAT=ogg AUDIO_QUALITY=160K yt-audio ...
+AUDIO_FORMAT="${AUDIO_FORMAT:-mp3}"
+AUDIO_QUALITY="${AUDIO_QUALITY:-192K}"
+
+# Nota: serve ffmpeg installato, come per yt-dlp in generale
+
+yt-dlp \
+  --yes-playlist \
+  -f 'bestaudio/best' \
+  -x \
+  --audio-format "$AUDIO_FORMAT" \
+  --audio-quality "$AUDIO_QUALITY" \
+  --no-embed-subs \
+  -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
+  "$URL" "$@"

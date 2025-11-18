@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "Uso: $0 URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
+  echo "Esempio: $0 'https://www.youtube.com/watch?v=XXXX'" >&2
+  exit 1
+fi
+
+URL="$1"
+shift || true
+
+# Scarica il miglior video+audio possibile e li unisce in un MP4
+# (remux con ffmpeg, niente ricompressione se non necessario)
+
+yt-dlp \
+  --yes-playlist \
+  -f "bv*+ba/best" \
+  --merge-output-format mp4 \
+  --no-embed-subs \
+  -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
+  "$URL" "$@"
