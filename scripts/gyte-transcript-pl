@@ -25,16 +25,16 @@ if ! command -v yt-dlp >/dev/null 2>&1; then
   exit 1
 fi
 
-if ! command -v yt-transcript >/dev/null 2>&1; then
-  echo "Errore: 'yt-transcript' non trovato nel PATH." >&2
-  echo "Assicurati che 'yt-transcript' sia nel PATH (vedi README)." >&2
+if ! command -v gyte-transcript >/dev/null 2>&1; then
+  echo "Errore: 'gyte-transcript' non trovato nel PATH." >&2
+  echo "Assicurati che 'gyte-transcript' sia nel PATH (vedi README)." >&2
   exit 1
 fi
 
 echo "URL playlist normalizzata: $PLAYLIST_URL"
 echo "Recupero info playlist…"
 
-# Prendo il titolo della playlist SENZA pipe a head, per evitare Broken pipe
+# Prendo il titolo della playlist senza pipe a head, per evitare Broken pipe
 PLAYLIST_TITLE="$(
   yt-dlp --ignore-config --flat-playlist --playlist-items 1 \
          --print '%(playlist_title)s' "$PLAYLIST_URL" 2>/dev/null || true
@@ -49,32 +49,3 @@ fi
 
 # Sanifica il nome per usarlo come directory
 SAFE_NAME="$(printf '%s\n' "${PLAYLIST_TITLE:-playlist}" | tr ' /:\t' '_' | tr -s '_')"
-TARGET_DIR="yt-playlist-${SAFE_NAME}"
-
-mkdir -p "$TARGET_DIR"
-cd "$TARGET_DIR"
-
-echo "Cartella di lavoro: $(pwd)"
-echo "Estrazione URL dei video della playlist…"
-
-# Una URL per riga, forma completa https://www.youtube.com/watch?v=...
-yt-dlp --ignore-config --flat-playlist \
-  --print 'https://www.youtube.com/watch?v=%(id)s' \
-  "$PLAYLIST_URL" > urls.txt
-
-NUM_VID=$(wc -l < urls.txt | tr -d '[:space:]')
-
-if [ "$NUM_VID" -eq 0 ]; then
-  echo "Nessun video trovato nella playlist (controlla l'URL?)." >&2
-  exit 1
-fi
-
-echo "Trovati $NUM_VID video. Avvio fino a $MAX_JOBS job in parallelo…"
-echo
-
-# Lancio yt-transcript per ogni URL, fino a MAX_JOBS in parallelo
-xargs -r -P "$MAX_JOBS" -n1 yt-transcript < urls.txt
-
-echo
-echo "Fatto. Tutte le trascrizioni .txt sono in: $(pwd)"
-

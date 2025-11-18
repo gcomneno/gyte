@@ -13,9 +13,11 @@ shift || true
 # Lingue sottotitoli: default it,en ma modificabile via env
 SUB_LANGS="${YT_TRANSCRIPT_LANGS:-it,en}"
 
-# 1) Scarica SOLO sottotitoli (no media)
-#    (self-contained, nessun config esterno obbligatorio)
-yt-dlp \
+echo ">> Scarico sottotitoli ($SUB_LANGS) da: $URL"
+
+# Proviamo a scaricare i .vtt, ma NON facciamo fallire lo script se yt-dlp dà errore
+if ! yt-dlp \
+  --ignore-config \
   --yes-playlist \
   --skip-download \
   --write-sub \
@@ -24,6 +26,10 @@ yt-dlp \
   --no-embed-subs \
   -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
   "$URL" "$@"
+then
+  echo "⚠️  Attenzione: yt-dlp ha restituito un errore (es. 429 o sottotitoli mancanti)." >&2
+  echo "   Provo comunque a pulire eventuali file .vtt scaricati..." >&2
+fi
 
 # 2) Pulisci tutti i .vtt nella cartella corrente
 for f in *.vtt; do
@@ -45,4 +51,3 @@ for f in *.vtt; do
   echo "Creato: $out (da $f, che verrà eliminato)"
   rm -- "$f"
 done
-
