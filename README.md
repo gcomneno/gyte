@@ -1,5 +1,5 @@
 # GYTE
-GiadaWare YouTube Toolkit — transcript, audio e video da YouTube via yt-dlp + bash.
+GiadaWare YouTube Toolkit Extractor — extract transcript, audio e video da YouTube via yt-dlp + bash.
 ---
 
 GYTE è una mini–suite da linea di comando per scaricare da YouTube in modo pulito:
