@@ -7,10 +7,28 @@ set -euo pipefail
 #   - gyte-audio
 #   - gyte-video
 #   - gyte-reflow-text
+#
+# Puoi passare l'URL del video come primo argomento:
+#   ./basic-usage.sh "https://www.youtube.com/watch?v=XXXX"
+#
+# Se non passi nulla, usa un segnaposto da sostituire.
 
-VIDEO_URL="https://www.youtube.com/watch?v=VIDEO_ID_REPLACE_ME"
+VIDEO_URL="${1:-https://www.youtube.com/watch?v=VIDEO_ID_REPLACE_ME}"
 
 echo ">> Transcript del video"
+
+# Lingua di default: tenta IT, poi EN (comportamento standard GYTE)
+# YT_TRANSCRIPT_LANGS="it,en" gyte-transcript "$VIDEO_URL"
+
+# Esempi alternativi (decommenta quello che ti serve):
+
+# Solo inglese:
+# YT_TRANSCRIPT_LANGS="en" gyte-transcript "$VIDEO_URL"
+
+# Francese con fallback su inglese:
+# YT_TRANSCRIPT_LANGS="fr,en" gyte-transcript "$VIDEO_URL"
+
+# Per lasciare il default GYTE (it,en), usa semplicemente:
 gyte-transcript "$VIDEO_URL"
 
 echo

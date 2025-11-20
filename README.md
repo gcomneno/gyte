@@ -215,8 +215,56 @@ Se non specifichi `inputfile` o passi `-`, legge da `stdin`.
 
 ---
 
+# Esempi GYTE
+La cartella `examples` contiene esempi pratici di utilizzo di GYTE:
+
+- `basic-usage.sh`  
+  Esempio di utilizzo base su un singolo video: transcript, audio, video e reflow del testo.
+
+- `mit-ocw-python.sh`  
+  Esempio pensato per una playlist di corso (MIT 6.100L) con estrazione transcript.
+
+- `sample-transcript.raw.txt`  
+  Esempio di transcript "grezzo" come potrebbe uscire da `gyte-transcript`.
+
+- `sample-transcript.sentences.txt`  
+  Lo stesso testo, dopo il passaggio con `gyte-reflow-text` (una frase per riga).
+
+Questi file sono solo dimostrativi: sostituisci le URL e i nomi file con quelli che ti servono nel tuo contesto reale.
+
+## Come impostazione lingua per le trascrizioni
+Per impostazione predefinita, `gyte-transcript` usa:
+
+```bash
+YT_TRANSCRIPT_LANGS="it,en"
+```
+
+cioè:
+- prova prima a scaricare i sottotitoli in italiano (it);
+- se non disponibili, ripiega su inglese (en).
+
+Puoi cambiare questo comportamento impostando l'env prima del comando.
+
+```bash
+#Solo inglese
+YT_TRANSCRIPT_LANGS="en" gyte-transcript "https://www.youtube.com/watch?v=VIDEO_ID"
+
+#Francese con fallback su inglese
+YT_TRANSCRIPT_LANGS="fr,en" gyte-transcript "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+Se vuoi forzare una lingua meno comune (es. tedesco) sapendo che spesso ci sono solo auto–sub:
+```bash
+#Solo Tedesco
+YT_TRANSCRIPT_LANGS="de" gyte-transcript "https://www.youtube.com/watch?v=VIDEO_ID"
+```
+
+Nota: l’ordine delle lingue in YT_TRANSCRIPT_LANGS è significativo: viene usata la prima disponibile nell’elenco.
+
+---
+
 ## Roadmap
-vedi il file `ROADMAP` per i dettagli
+vedi il file `ROADMAP.md` per i dettagli
 ---
 
 ## Licenza
