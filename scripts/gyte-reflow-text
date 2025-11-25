@@ -4,6 +4,8 @@ set -euo pipefail
 # Uso:
 #   gyte-reflow-text input.txt  > output.txt
 #   cat input.txt | gyte-reflow-text > output.txt
+#
+# Se non specifichi il file o passi "-", legge da stdin.
 
 if [ $# -gt 1 ]; then
   echo "Uso: $0 [inputfile]" >&2
@@ -11,7 +13,7 @@ if [ $# -gt 1 ]; then
   exit 1
 fi
 
-if [ $# -eq 0 ] || [ "$1" = "-" ]; then
+if [ $# -eq 0 ] || [ "${1:-}" = "-" ]; then
   INPUT="/dev/stdin"
 else
   INPUT="$1"
@@ -23,6 +25,13 @@ fi
 
 tr -d '\r' < "$INPUT" \
   | sed 's/^"//; s/"$//' \
+  | sed -E \
+      -e 's/&nbsp;+/ /g' \
+      -e 's/&amp;/\&/g' \
+      -e 's/&lt;/</g' \
+      -e 's/&gt;/>/g' \
+      -e 's/&quot;/"/g' \
+      -e 's/&#39;/'"'"'/g' \
   | awk '
     BEGIN { par = "" }
     {
@@ -46,4 +55,3 @@ tr -d '\r' < "$INPUT" \
   ' \
   | sed -E 's/[[:space:]]+/ /g' \
   | sed -E 's/([.!?])\s*/\1\n/g'
-
