@@ -52,6 +52,8 @@ chmod +x scripts/gyte-*
 Opzionale: aggiungili al PATH (esempio con `~/.local/bin`):
 
 ```
+# dalla root del progetto GYTE
+
 mkdir -p ~/.local/bin
 ln -sf "$(pwd)/scripts/gyte-transcript"    ~/.local/bin/gyte-transcript
 ln -sf "$(pwd)/scripts/gyte-transcript-pl" ~/.local/bin/gyte-transcript-pl
@@ -61,6 +63,29 @@ ln -sf "$(pwd)/scripts/gyte-reflow-text"   ~/.local/bin/gyte-reflow-text
 ```
 
 Assicurati che `~/.local/bin` sia nel tuo PATH.
+
+### Installare ffmpeg
+
+GYTE usa `ffmpeg` per:
+- estrarre solo l'audio dai video (`gyte-audio`)
+- unire audio+video nei file MP4 (`gyte-video`)
+
+Esempi di installazione:
+
+**Ubuntu / Debian**
+```bash
+sudo apt update
+sudo apt install ffmpeg
+ffmpeg -version
+```
+
+**macOS (Homebrew)**
+```bash
+brew install ffmpeg
+ffmpeg -version
+```
+
+Su altri sistemi operativi puoi installare **ffmpeg** tramite il gestore di pacchetti distribuzione-specifico oppure scaricare un build precompilato e aggiungerlo al PATH.
 
 ---
 
