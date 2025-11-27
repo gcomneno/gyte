@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Uso:
+#   gyte-merge-pl [PLAYLIST_DIR]
+#
+# Esempi:
+#   # dalla root dove gyte-transcript-pl ha creato la cartella
+#   cd yt-playlist-Towers_of_Hanoi
+#   gyte-merge-pl
+#
+#   # oppure passando esplicitamente la directory
+#   gyte-merge-pl yt-playlist-Towers_of_Hanoi
+#
+# Cosa fa:
+#   - cerca tutti i .txt nella directory della playlist
+#   - li concatena in un unico file:
+#       <PLAYLIST_NAME>.merged.txt
+#   - aggiunge un'intestazione per ogni blocco:
+#       # [N] Titolo video (ID)
+#       # File: filename.txt
+#
+# Note:
+#   - PLAYLIST_NAME deriva dal nome della directory:
+#       yt-playlist-FOO_BAR  ->  FOO_BAR.merged.txt
+#   - se il parsing di titolo/ID fallisce, usa semplicemente il nome file.
+
+usage() {
+  cat >&2 << 'EOF'
+Uso:
+  gyte-merge-pl [PLAYLIST_DIR]
+
+Esempi:
+  cd yt-playlist-Towers_of_Hanoi
+  gyte-merge-pl
+
+  gyte-merge-pl yt-playlist-Towers_of_Hanoi
+EOF
+}
+
+if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+PLAYLIST_DIR="${1:-.}"
+
+if [ ! -d "$PLAYLIST_DIR" ]; then
+  echo "Errore: directory playlist non trovata: $PLAYLIST_DIR" >&2
+  exit 1
+fi
+
+cd "$PLAYLIST_DIR"
+
+# Trova i .txt (transcript) nella directory corrente
+shopt -s nullglob
+txt_files=( *.txt )
+shopt -u nullglob
+
+if [ "${#txt_files[@]}" -eq 0 ]; then
+  echo "Nessun file .txt trovato in $(pwd)" >&2
+  exit 0
+fi
+
+# Determina il nome playlist da basename della directory
+dir_name="$(basename "$(pwd)")"
+playlist_name="${dir_name#yt-playlist-}"
+out_file="${playlist_name}.merged.txt"
+
+echo ">> Directory playlist: $(pwd)"
+echo ">> Trovati ${#txt_files[@]} file .txt"
+echo ">> File di output: $out_file"
+
+# Sovrascrive eventuale file esistente
+: > "$out_file"
+
+# Header generale
+{
+  echo "# Merged transcript per playlist: $playlist_name"
+  echo "# Generato da gyte-merge-pl"
+  echo
+} >> "$out_file"
+
+index=0
+
+# Ordina alfabeticamente i file per poterli avere in ordine stabile
+IFS=$'\n' sorted_files=($(printf '%s\n' "${txt_files[@]}" | sort))
+unset IFS
+
+for f in "${sorted_files[@]}"; do
+  index=$((index + 1))
+
+  filename="$f"
+  base="${filename%.txt}"
+
+  # Prova a pulire suffix lingua (es. .en, .it) se presente
+  no_lang="${base%.*}"
+
+  # Prova a estrarre ID tra parentesi quadre in coda: ... [ID]
+  id_part="$no_lang"
+  video_id=""
+  if [[ "$no_lang" == *"["*"]" ]]; then
+    id_part="${no_lang##*\[}"       # dopo l'ultima [
+    video_id="${id_part%]*}"        # prima della ]
+  fi
+
+  # Prova a estrarre il "Titolo video" togliendo uploader e [ID]
+  # Pattern tipico: "Uploader - Titolo [ID]"
+  title_part="$no_lang"
+  # Rimuove " [ID]" finale se presente
+  if [[ "$title_part" == *"["*"]" ]]; then
+    title_part="${title_part% \[*}"
+  fi
+  # Rimuove eventuale "Uploader - " all'inizio
+  if [[ "$title_part" == *" - "* ]]; then
+    # Prende la parte dopo il primo " - "
+    title_part="${title_part#*- }"
+  fi
+
+  # Costruzione intestazione per il blocco
+  header_title="$title_part"
+  if [ -n "$video_id" ]; then
+    header_title="$header_title ($video_id)"
+  fi
+
+  {
+    echo "# [${index}] $header_title"
+    echo "# File: $filename"
+    echo
+    cat "$filename"
+    echo
+    echo
+  } >> "$out_file"
+done
+
+echo ">> Merge completato: $out_file"
