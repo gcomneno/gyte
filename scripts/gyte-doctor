@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Uso:
+#   gyte-doctor
+#
+# Scopo:
+#   Verificare se l'ambiente è pronto per usare GYTE:
+#   - yt-dlp nel PATH
+#   - ffmpeg nel PATH
+#   - ~/.local/bin incluso nel PATH
+#   - runtime JS opzionale (node/deno) per eventuali feature future
+#
+# Exit code:
+#   0 = tutto essenziale OK
+#   1 = manca almeno una dipendenza essenziale
+
+print_header() {
+  echo "GYTE Doctor — quick env check"
+  echo "============================="
+  echo
+}
+
+have_cmd() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+print_ok() {
+  # verde se il terminale lo supporta, altrimenti testo normale
+  if [ -t 1 ]; then
+    printf '\033[32m[OK]\033[0m %s\n' "$1"
+  else
+    printf '[OK] %s\n' "$1"
+  fi
+}
+
+print_warn() {
+  if [ -t 1 ]; then
+    printf '\033[33m[WARN]\033[0m %s\n' "$1"
+  else
+    printf '[WARN] %s\n' "$1"
+  fi
+}
+
+print_err() {
+  if [ -t 1 ]; then
+    printf '\033[31m[MISS]\033[0m %s\n' "$1"
+  else
+    printf '[MISS] %s\n' "$1"
+  fi
+}
+
+usage() {
+  cat >&2 << 'EOF'
+Uso:
+  gyte-doctor
+
+Esegue una serie di check sull'ambiente:
+  - yt-dlp nel PATH
+  - ffmpeg nel PATH
+  - ~/.local/bin nel PATH
+  - presenza di node/deno (opzionale, warning soft)
+
+Exit code:
+  0 = dipendenze essenziali OK
+  1 = manca almeno una dipendenza essenziale
+EOF
+}
+
+if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+print_header
+
+exit_code=0
+
+# 1) yt-dlp
+if have_cmd yt-dlp; then
+  ver="$(yt-dlp --version 2>/dev/null || echo '?')"
+  print_ok "yt-dlp presente (versione: $ver)"
+else
+  print_err "yt-dlp NON trovato nel PATH."
+  echo "      Installa ad es.: pip install yt-dlp, oppure usa il binario standalone." >&2
+  exit_code=1
+fi
+
+# 2) ffmpeg
+if have_cmd ffmpeg; then
+  ver="$(ffmpeg -version 2>/dev/null | head -n1 || echo '?')"
+  print_ok "ffmpeg presente ($ver)"
+else
+  print_err "ffmpeg NON trovato nel PATH."
+  echo "      È richiesto per gyte-audio e gyte-video." >&2
+  exit_code=1
+fi
+
+# 3) ~/.local/bin nel PATH
+LOCAL_BIN="$HOME/.local/bin"
+case ":$PATH:" in
+  *":$LOCAL_BIN:"*)
+    print_ok "~/.local/bin è nel PATH"
+    ;;
+  *)
+    if [ -d "$LOCAL_BIN" ]; then
+      print_warn "~/.local/bin esiste ma NON è nel PATH."
+      echo "       Aggiungi qualcosa tipo: export PATH=\"\$HOME/.local/bin:\$PATH\" nel tuo ~/.bashrc o equivalente." >&2
+    else
+      print_warn "~/.local/bin non esiste ancora."
+      echo "       Verrà creato automaticamente se segui le istruzioni di installazione di GYTE." >&2
+    fi
+    ;;
+esac
+
+# 4) Runtime JS (opzionale)
+js_runtime=""
+if have_cmd node; then
+  js_runtime="node"
+elif have_cmd deno; then
+  js_runtime="deno"
+fi
+
+if [ -n "$js_runtime" ]; then
+  print_ok "Runtime JS opzionale rilevato: $js_runtime"
+else
+  print_warn "Nessun runtime JS (node/deno) trovato. Non è obbligatorio, ma potrebbe servire per feature avanzate future."
+fi
+
+echo
+if [ "$exit_code" -eq 0 ]; then
+  echo "Tutto pronto per usare GYTE ✅"
+else
+  echo "Alcune dipendenze essenziali mancano. Sistema i [MISS] sopra e riprova. ❌" >&2
+fi
+
+exit "$exit_code"
