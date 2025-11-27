@@ -1,51 +1,134 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Uso:
+#   gyte-transcript-pl [--no-parallel] PLAYLIST_URL [MAX_JOBS]
+#
+# Esempi:
+#   gyte-transcript-pl 'https://www.youtube.com/watch?v=AAA&list=PLXXX' 4
+#   gyte-transcript-pl --no-parallel 'https://www.youtube.com/watch?v=AAA&list=PLXXX'
+#
+# Env:
+#   GYTE_SLEEP_BETWEEN   numero di secondi di pausa tra un video e l'altro
+#                        usato SOLO in modalità sequenziale (--no-parallel)
+
+usage() {
+  cat >&2 << 'EOF'
+Uso:
+  gyte-transcript-pl [--no-parallel] PLAYLIST_URL [MAX_JOBS]
+
+Esempi:
+  # modalità parallela (default), fino a 4 job
+  gyte-transcript-pl 'https://www.youtube.com/watch?v=AAA&list=PLXXX' 4
+
+  # modalità sequenziale (safe), con pausa di 2 secondi tra video
+  GYTE_SLEEP_BETWEEN=2 gyte-transcript-pl --no-parallel 'https://www.youtube.com/watch?v=AAA&list=PLXXX'
+
+Argomenti:
+  --no-parallel   forza l'elaborazione sequenziale (un video alla volta)
+  MAX_JOBS        numero massimo di job in parallelo (default: 4)
+
+Env:
+  GYTE_SLEEP_BETWEEN   pausa (in secondi) tra un video e l'altro in modalità sequenziale
+EOF
+}
+
+if [ "${1-}" = "-h" ] || [ "${1-}" = "--help" ]; then
+  usage
+  exit 0
+fi
+
+NO_PARALLEL=0
+
+# Opzione opzionale --no-parallel
+if [ "${1-}" = "--no-parallel" ]; then
+  NO_PARALLEL=1
+  shift
+fi
+
 if [ $# -lt 1 ]; then
-  echo "Uso: $0 URL_PLAYLIST [MAX_JOBS]" >&2
-  echo "Esempio: $0 'https://www.youtube.com/playlist?list=XXXX' 4" >&2
+  usage
   exit 1
 fi
 
-RAW_URL="$1"
+PLAYLIST_URL="$1"
 MAX_JOBS="${2:-4}"
 
-# Normalizza: se c'è list=XXXXX dentro la URL, costruiamo la URL playlist canonica
-if [[ "$RAW_URL" == *"list="* ]]; then
-  list_id="${RAW_URL##*list=}"   # prendi tutto dopo 'list='
-  list_id="${list_id%%&*}"       # tronca ad eventuale '&'
-  PLAYLIST_URL="https://www.youtube.com/playlist?list=${list_id}"
+SLEEP_BETWEEN="${GYTE_SLEEP_BETWEEN:-0}"
+
+# Normalizza URL → playlist?list=ID
+if [[ "$PLAYLIST_URL" == *"list="* ]]; then
+  LIST_ID="${PLAYLIST_URL##*list=}"
+  LIST_ID="${LIST_ID%%&*}"
+  PL_URL="https://www.youtube.com/playlist?list=${LIST_ID}"
 else
-  PLAYLIST_URL="$RAW_URL"
-fi
-
-# Controlli di base
-if ! command -v yt-dlp >/dev/null 2>&1; then
-  echo "Errore: 'yt-dlp' non trovato nel PATH." >&2
+  echo "Errore: URL playlist non contiene 'list=': $PLAYLIST_URL" >&2
   exit 1
 fi
 
-if ! command -v gyte-transcript >/dev/null 2>&1; then
-  echo "Errore: 'gyte-transcript' non trovato nel PATH." >&2
-  echo "Assicurati che 'gyte-transcript' sia nel PATH (vedi README)." >&2
-  exit 1
-fi
-
-echo "URL playlist normalizzata: $PLAYLIST_URL"
+echo "URL playlist normalizzata: $PL_URL"
 echo "Recupero info playlist…"
 
-# Prendo il titolo della playlist senza pipe a head, per evitare Broken pipe
-PLAYLIST_TITLE="$(
-  yt-dlp --ignore-config --flat-playlist --playlist-items 1 \
-         --print '%(playlist_title)s' "$PLAYLIST_URL" 2>/dev/null || true
-)"
+# Tenta di recuperare il titolo della playlist
+PLAYLIST_TITLE="$(yt-dlp --flat-playlist --print "%(playlist_title)s" --playlist-start 1 --playlist-end 1 "$PL_URL" 2>/dev/null | head -n 1 || true)"
 
-if [ -z "$PLAYLIST_TITLE" ] || [ "$PLAYLIST_TITLE" = "NA" ]; then
-  PLAYLIST_TITLE="$(
-    yt-dlp --ignore-config --flat-playlist --playlist-items 1 \
-           --print '%(playlist_id)s' "$PLAYLIST_URL" 2>/dev/null || true
-  )"
+if [ -z "$PLAYLIST_TITLE" ]; then
+  PLAYLIST_TITLE="NA"
 fi
 
-# Sanifica il nome per usarlo come directory
-SAFE_NAME="$(printf '%s\n' "${PLAYLIST_TITLE:-playlist}" | tr ' /:\t' '_' | tr -s '_')"
+# Sanifica nome directory
+SAFE_TITLE="$(echo "$PLAYLIST_TITLE" | tr ' /' '__')"
+WORKDIR="yt-playlist-${SAFE_TITLE}"
+
+echo "Cartella di lavoro: $(pwd)/$WORKDIR"
+mkdir -p "$WORKDIR"
+cd "$WORKDIR"
+
+echo "Estrazione URL dei video della playlist…"
+yt-dlp --flat-playlist --print "%(webpage_url)s" "$PL_URL" > urls.txt
+
+if [ ! -s urls.txt ]; then
+  echo "Nessun video trovato nella playlist (urls.txt vuoto)." >&2
+  exit 0
+fi
+
+TOTAL=$(grep -c . urls.txt || echo 0)
+
+if [ "$TOTAL" -eq 0 ]; then
+  echo "Nessun video valido in urls.txt." >&2
+  exit 0
+fi
+
+if [ "$NO_PARALLEL" -eq 1 ]; then
+  echo "Trovati $TOTAL video. Modalità: sequenziale."
+  if [ "$SLEEP_BETWEEN" -gt 0 ]; then
+    echo ">> [INFO] Pausa tra i video: ${SLEEP_BETWEEN}s (GYTE_SLEEP_BETWEEN)" >&2
+  fi
+
+  idx=0
+  while IFS= read -r url; do
+    url="${url%%[[:space:]]*}"
+    [ -z "$url" ] && continue
+
+    idx=$((idx + 1))
+    echo ">> [$idx/$TOTAL] gyte-transcript \"$url\""
+    gyte-transcript "$url"
+
+    if [ "$SLEEP_BETWEEN" -gt 0 ] && [ "$idx" -lt "$TOTAL" ]; then
+      echo ">> Sleep ${SLEEP_BETWEEN}s prima del prossimo video..."
+      sleep "$SLEEP_BETWEEN"
+    fi
+  done < urls.txt
+else
+  echo "Trovati $TOTAL video. Modalità: parallela (max $MAX_JOBS job)."
+  if [ "$SLEEP_BETWEEN" -gt 0 ]; then
+    echo ">> [INFO] GYTE_SLEEP_BETWEEN=$SLEEP_BETWEEN impostato ma ignorato in modalità parallela." >&2
+  fi
+
+  echo "Avvio fino a $MAX_JOBS job in parallelo…"
+  # Esegue gyte-transcript per ogni URL (xargs, un argomento per chiamata)
+  xargs -r -P "$MAX_JOBS" -n 1 gyte-transcript < urls.txt
+fi
+
+echo
+echo "Fatto. Tutte le trascrizioni .txt sono in: $(pwd)"

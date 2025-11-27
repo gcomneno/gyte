@@ -1,37 +1,107 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Uso:
+#   gyte-transcript URL_YOUTUBE [ALTRI_ARG_YT_DLP...]
+#
+# Lingue preferite (in ordine) tramite env:
+#   YT_TRANSCRIPT_LANGS="it,en"   (default)
+#   YT_TRANSCRIPT_LANGS="en"      (solo inglese)
+#   YT_TRANSCRIPT_LANGS="fr,en"   (francese con fallback su en)
+#
+# Modalità silenziosa (yt-dlp):
+#   GYTE_YTDLP_QUIET=1  -> passa -q --no-warnings a yt-dlp
+
 if [ $# -lt 1 ]; then
   echo "Uso: $0 URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
-  echo "Esempio: $0 'https://www.youtube.com/watch?v=XXXX'" >&2
   exit 1
 fi
 
 URL="$1"
 shift || true
 
-# Lingue sottotitoli: default it,en ma modificabile via env
-SUB_LANGS="${YT_TRANSCRIPT_LANGS:-it,en}"
-
-echo ">> Scarico sottotitoli ($SUB_LANGS) da: $URL"
-
-# Proviamo a scaricare i .vtt, ma NON facciamo fallire lo script se yt-dlp dà errore
-if ! yt-dlp \
-  --ignore-config \
-  --yes-playlist \
-  --skip-download \
-  --write-sub \
-  --write-auto-sub \
-  --sub-langs "$SUB_LANGS" \
-  --no-embed-subs \
-  -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
-  "$URL" "$@"
-then
-  echo "⚠️  Attenzione: yt-dlp ha restituito un errore (es. 429 o sottotitoli mancanti)." >&2
-  echo "   Provo comunque a pulire eventuali file .vtt scaricati..." >&2
+if [ -z "$URL" ]; then
+  echo "ERRORE: URL YouTube mancante." >&2
+  echo "Uso: gyte-transcript <URL YouTube>" >&2
+  exit 2
 fi
 
-# 2) Pulisci tutti i .vtt nella cartella corrente
+LANGS_RAW="${YT_TRANSCRIPT_LANGS:-it,en}"
+QUIET_FLAG="${GYTE_YTDLP_QUIET:-0}"
+
+echo ">> Scarico sottotitoli (ordine preferenze: $LANGS_RAW) da: $URL"
+
+# Config file opzionali per yt-dlp
+COMMON_CONF="$HOME/.config/yt-dlp/common.conf"
+PROFILE_CONF="$HOME/.config/yt-dlp/profile-transcript.conf"
+
+yt_dlp_base_args=()
+
+if [ -f "$COMMON_CONF" ]; then
+  yt_dlp_base_args+=(--config-locations "$COMMON_CONF")
+else
+  echo ">> [INFO] common.conf non trovato in $COMMON_CONF (ok, procedo senza)" >&2
+fi
+
+if [ -f "$PROFILE_CONF" ]; then
+  yt_dlp_base_args+=(--config-locations "$PROFILE_CONF")
+else
+  echo ">> [INFO] profile-transcript.conf non trovato in $PROFILE_CONF (ok, procedo senza)" >&2
+fi
+
+# Opzioni "solo sottotitoli" sempre applicate,
+# così lo script è autosufficiente anche senza config esterni.
+yt_dlp_base_args+=(
+  --skip-download          # niente video/audio
+  --write-sub              # sottotitoli "normali"
+  --write-auto-sub         # auto-generati YouTube
+  --no-embed-subs          # nessun embed (tanto non c’è video)
+  -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s"
+)
+
+# Modalità quiet opzionale
+if [ "$QUIET_FLAG" = "1" ]; then
+  yt_dlp_base_args+=(
+    -q            # quiet: solo errori
+    --no-warnings # niente WARN
+  )
+  echo ">> [INFO] Modalità quiet attiva per yt-dlp (GYTE_YTDLP_QUIET=1)" >&2
+fi
+
+# Split delle lingue su virgola
+IFS=',' read -r -a LANGS_ARR <<< "$LANGS_RAW"
+
+success=0
+
+for lang in "${LANGS_ARR[@]}"; do
+  # trim spazi
+  lang_trim="${lang//[[:space:]]/}"
+  [ -z "$lang_trim" ] && continue
+
+  echo ">> Provo lingua: $lang_trim"
+
+  if yt-dlp \
+    "${yt_dlp_base_args[@]}" \
+    --sub-langs "$lang_trim" \
+    "$URL" "$@"
+  then
+    success=1
+    echo ">> Sottotitoli scaricati con successo per lingua: $lang_trim"
+    break
+  else
+    rc=$?
+    echo ">> [WARN] yt-dlp non ha scaricato sottotitoli per lingua '$lang_trim' (exit $rc)" >&2
+  fi
+done
+
+if [ "$success" -eq 0 ]; then
+  echo "⚠️  Attenzione: yt-dlp non è riuscito a scaricare sottotitoli per nessuna delle lingue ($LANGS_RAW)." >&2
+  echo "    Controlla se il video ha sottotitoli oppure prova a impostare, ad es.:" >&2
+  echo '      YT_TRANSCRIPT_LANGS="en" gyte-transcript "<URL_YT>"' >&2
+fi
+
+echo ">> Pulizia file .vtt -> .txt (se presenti)..."
+
 for f in *.vtt; do
   [ -e "$f" ] || continue
   out="${f%.vtt}.txt"
@@ -46,8 +116,10 @@ for f in *.vtt; do
     -e 's/<[^>]+>//g' \
     -e 's/^[[:space:]]+//; s/[[:space:]]+$//' \
     -e '/^[[:space:]]*$/d' \
-    "$f" | awk 'prev != $0 { if ($0 != "") print; prev = $0 }' > "$out"
+    "$f" \
+  | awk 'prev != $0 { if ($0 != "") print; prev = $0 }' \
+  > "$out"
 
-  echo "Creato: $out (da $f, che verrà eliminato)"
+  echo "   Creato: $out (da $f, che verrà eliminato)"
   rm -- "$f"
 done
