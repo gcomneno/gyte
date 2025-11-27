@@ -1,0 +1,51 @@
+name: GYTE CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  lint-shell:
+    name: Shellcheck scripts
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck on scripts
+        run: |
+          shellcheck scripts/gyte-* || {
+            echo "::error ::Shellcheck ha trovato problemi negli script."
+            exit 1
+          }
+
+  yt-dlp-dry-run:
+    name: yt-dlp dry-run (metadata only)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install yt-dlp (via pip)
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install yt-dlp
+
+      - name: yt-dlp metadata dry-run
+        env:
+          TEST_URL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        run: |
+          echo ">> Verifico che yt-dlp funzioni in modalità solo metadata..."
+          yt-dlp --skip-download --print "%(title)s" --simulate "$TEST_URL"
+
