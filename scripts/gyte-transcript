@@ -2,7 +2,12 @@
 set -euo pipefail
 
 # Uso:
-#   gyte-transcript URL_YOUTUBE [ALTRI_ARG_YT_DLP...]
+#   gyte-transcript [--outdir DIR] URL_YOUTUBE [ALTRI_ARG_YT_DLP...]
+#
+# Directory di output:
+#   GYTE_OUTDIR="/percorso" gyte-transcript URL
+#   gyte-transcript --outdir "/percorso" URL
+#   Priorità: --outdir > GYTE_OUTDIR > cwd
 #
 # Lingue preferite (in ordine) tramite env:
 #   YT_TRANSCRIPT_LANGS="it,en"   (default)
@@ -11,9 +16,44 @@ set -euo pipefail
 #
 # Modalità silenziosa (yt-dlp):
 #   GYTE_YTDLP_QUIET=1  -> passa -q --no-warnings a yt-dlp
+#
+# Formati generati:
+#   - .txt  : transcript pulito (come in versione precedente)
+#   - .srt  : da .vtt → reformatting timestamp in stile SRT
+#   - .md   : Markdown, un file per video (stesso basename del .txt)
+
+# --------------------------
+# Gestione --outdir / GYTE_OUTDIR
+# --------------------------
+OUTDIR="${GYTE_OUTDIR:-.}"
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --outdir)
+      if [ $# -lt 2 ]; then
+        echo "Errore: --outdir richiede un argomento" >&2
+        exit 2
+      fi
+      OUTDIR="$2"
+      shift 2
+      ;;
+    --outdir=*)
+      OUTDIR="${1#--outdir=}"
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      # Primo argomento non-opzione -> presumiamo sia la URL
+      break
+      ;;
+  esac
+done
 
 if [ $# -lt 1 ]; then
-  echo "Uso: $0 URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
+  echo "Uso: $0 [--outdir DIR] URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
   exit 1
 fi
 
@@ -22,13 +62,17 @@ shift || true
 
 if [ -z "$URL" ]; then
   echo "ERRORE: URL YouTube mancante." >&2
-  echo "Uso: gyte-transcript <URL YouTube>" >&2
+  echo "Uso: gyte-transcript [--outdir DIR] <URL YouTube>" >&2
   exit 2
 fi
+
+mkdir -p "$OUTDIR"
+cd "$OUTDIR"
 
 LANGS_RAW="${YT_TRANSCRIPT_LANGS:-it,en}"
 QUIET_FLAG="${GYTE_YTDLP_QUIET:-0}"
 
+echo ">> Output directory: $OUTDIR"
 echo ">> Scarico sottotitoli (ordine preferenze: $LANGS_RAW) da: $URL"
 
 # Config file opzionali per yt-dlp
@@ -100,12 +144,17 @@ if [ "$success" -eq 0 ]; then
   echo '      YT_TRANSCRIPT_LANGS="en" gyte-transcript "<URL_YT>"' >&2
 fi
 
-echo ">> Pulizia file .vtt -> .txt (se presenti)..."
+echo ">> Pulizia file .vtt -> .txt/.srt/.md (se presenti)..."
 
 for f in *.vtt; do
   [ -e "$f" ] || continue
-  out="${f%.vtt}.txt"
 
+  base_no_vtt="${f%.vtt}"     # es: "Uploader - Titolo [ID].en"
+  txt_out="${base_no_vtt}.txt"
+  srt_out="${base_no_vtt}.srt"
+  md_out="${base_no_vtt}.md"
+
+  # 1) .txt pulito (logica precedente, invariata)
   sed -E \
     -e '/^WEBVTT/d' \
     -e '/^Kind:/d' \
@@ -118,8 +167,62 @@ for f in *.vtt; do
     -e '/^[[:space:]]*$/d' \
     "$f" \
   | awk 'prev != $0 { if ($0 != "") print; prev = $0 }' \
-  > "$out"
+  > "$txt_out"
 
-  echo "   Creato: $out (da $f, che verrà eliminato)"
+  echo "   Creato: $txt_out (da $f)"
+
+  # 2) .srt — reformat dei timestamp in stile SRT
+  awk '
+    BEGIN {
+      idx = 0
+      in_note = 0
+    }
+
+    /^WEBVTT/ { next }              # rimuovi header
+    /^Kind:/ { next }
+    /^Language:/ { next }
+
+    /^NOTE/ { in_note = 1; next }
+    in_note && NF == 0 { in_note = 0; next }
+    in_note { next }
+
+    /^[[:space:]]*$/ {
+      # riga vuota → separatore tra cue
+      print ""
+      next
+    }
+
+    # linea di timestamp VTT
+    /^[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}[[:space:]]+-->[[:space:]]+[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/ {
+      idx++
+      # split per prendere solo start/end, ignorando eventuali attributi extra
+      n = split($0, a, /[[:space:]]+/)
+      start = a[1]
+      arrow = a[2]
+      end = a[3]
+      gsub(/\./, ",", start)
+      gsub(/\./, ",", end)
+      print idx
+      print start " " arrow " " end
+      next
+    }
+
+    {
+      print
+    }
+  ' "$f" > "$srt_out"
+
+  echo "   Creato: $srt_out (da $f)"
+
+  # 3) .md — Markdown semplice per singolo video
+  {
+    printf "# %s\n\n" "$(basename "$base_no_vtt")"
+    cat "$txt_out"
+    printf "\n"
+  } > "$md_out"
+
+  echo "   Creato: $md_out (da $txt_out)"
+
+  echo "   Elimino sorgente VTT: $f"
   rm -- "$f"
 done
