@@ -1,16 +1,19 @@
 ### 🎯 ROADMAP
 
 1. **Merge transcript di playlist**
-   - [ ] script tipo `gyte-merge-pl` che:
+   - [x] aggregato Markdown `playlist.md` che:
+     - [x] legge i file `.md` in `yt-playlist-*`
+     - [x] crea un unico `playlist.md` con intestazioni per video (ordine playlist).
+   - [ ] script dedicato tipo `gyte-merge-pl` che:
      - [ ] legge tutti i `.txt` in `yt-playlist-*`
      - [ ] crea un unico `PLAYLIST_NAME.merged.txt`
      - [ ] opzionale: intestazione con `# [N] Titolo video (ID)` prima di ogni blocco.
 
 2. **Opzioni di output più flessibili**
-   - [ ] variabile/env o flag `--outdir` per cambiare cartella di destinazione rispetto alla cwd.
-   - [ ] supporto per output alternativi:
-     - [ ] `.srt` (solo reformatting dei timestamp da `.vtt`)
-     - [ ] `.md` (magari con intestazioni per video).
+   - [x] variabile/env o flag `--outdir` per cambiare cartella di destinazione rispetto alla cwd (`GYTE_OUTDIR` + `--outdir` in `gyte-transcript`).
+   - [x] supporto per output alternativi in `gyte-transcript`:
+     - [x] `.srt` (reformatting dei timestamp da `.vtt`)
+     - [x] `.md` (con intestazione per video).
 
 3. **Qualità audio/video configurabile “pulita”**
    - [ ] env tipo `GYTE_AUDIO_QUALITY`, `GYTE_VIDEO_FORMAT`
@@ -19,7 +22,7 @@
 4. **“Modo sicuro YouTube”**
    - [x] aggiungere un piccolo throttling opzionale (sleep tra video) nelle playlist per ridurre il rischio di 429:
      - `GYTE_SLEEP_BETWEEN=2` secondi (già implementato)
-   - [x] flag `--no-parallel` per forzare sequenziale in `gyte-transcript-pl`. (già implementato)
+   - [x] flag `--no-parallel` per forzare sequenziale in `gyte-transcript-pl` (già implementato).
 
 5. **UX / Messaggi**
    - [x] log un po’ più leggibili (prefisso `>>` / `[INFO]` / `[WARN]`)
@@ -29,10 +32,10 @@
      - [x] lingua fallback (es: `it` fallisce → uso `en` e lo dico chiaramente).
 
 6. **Check dipendenze**
-   - [ ] script `gyte-doctor` che controlla:
-     - [ ] presenza `yt-dlp`
-     - [ ] presenza `ffmpeg`
-     - [ ] eventuale runtime JS (deno/node) e stampa warning “soft”.
+   - [x] script `gyte-doctor` che controlla:
+     - [x] presenza `yt-dlp`
+     - [x] presenza `ffmpeg`
+     - [x] eventuale runtime JS (deno/node) e stampa warning “soft”.
 
 7. **GitHub Actions (CI mini)**
    - [ ] workflow che:

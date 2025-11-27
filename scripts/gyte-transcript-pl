@@ -11,6 +11,12 @@ set -euo pipefail
 # Env:
 #   GYTE_SLEEP_BETWEEN   numero di secondi di pausa tra un video e l'altro
 #                        usato SOLO in modalità sequenziale (--no-parallel)
+#
+# Output:
+#   yt-playlist-<TITOLO_SANIFICATO>/
+#     urls.txt
+#     ... file per ogni video: *.txt, *.srt, *.md
+#     playlist.md  (aggregato Markdown dell'intera playlist)
 
 usage() {
   cat >&2 << 'EOF'
@@ -131,4 +137,74 @@ else
 fi
 
 echo
-echo "Fatto. Tutte le trascrizioni .txt sono in: $(pwd)"
+echo "Generazione file Markdown aggregato della playlist (playlist.md)…"
+
+PLAYLIST_MD="playlist.md"
+
+{
+  if [ "$PLAYLIST_TITLE" != "NA" ]; then
+    printf "# Playlist: %s\n\n" "$PLAYLIST_TITLE"
+  else
+    printf "# Playlist: %s\n\n" "$PL_URL"
+  fi
+
+  idx=0
+  while IFS= read -r url; do
+    url="${url%%[[:space:]]*}"
+    [ -z "$url" ] && continue
+
+    idx=$((idx + 1))
+
+    # Estrarre l'ID del video dalla URL
+    vid=""
+    if [[ "$url" == *"v="* ]]; then
+      tmp="${url##*v=}"
+      vid="${tmp%%&*}"
+    elif [[ "$url" == *"youtu.be/"* ]]; then
+      tmp="${url##*youtu.be/}"
+      vid="${tmp%%\?*}"
+    fi
+
+    md_file=""
+
+    if [ -n "$vid" ]; then
+      # cerca un file .md che contenga [ID] nel nome
+      # es: "Uploader - Titolo [ID].en.md"
+      for candidate in *"[$vid]"*.md; do
+        if [ -f "$candidate" ]; then
+          md_file="$candidate"
+          break
+        fi
+      done
+    fi
+
+    if [ -z "$md_file" ]; then
+      echo ">> [WARN] Nessun .md trovato per URL #$idx: $url" >&2
+      continue
+    fi
+
+    title_section="$(basename "$md_file" .md)"
+
+    printf "## %s\n\n" "$title_section"
+
+    # Copia il contenuto del .md saltando l'eventuale header "# ..."
+    first=1
+    while IFS= read -r line; do
+      if [ $first -eq 1 ]; then
+        first=0
+        if printf '%s\n' "$line" | grep -qE '^#[[:space:]]'; then
+          # Salta l'header interno del singolo file
+          read -r maybe_blank || true
+          continue
+        fi
+      fi
+      printf "%s\n" "$line"
+    done < "$md_file"
+
+    printf "\n\n"
+  done < urls.txt
+} > "$PLAYLIST_MD"
+
+echo "Creato file playlist Markdown: $(pwd)/$PLAYLIST_MD"
+echo
+echo "Fatto. Tutte le trascrizioni (.txt, .srt, .md) e playlist.md sono in: $(pwd)"
