@@ -72,7 +72,7 @@ if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
   exit 0
 fi
 
-print_header()
+print_header
 
 exit_code=0
 
