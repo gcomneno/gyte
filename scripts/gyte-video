@@ -10,13 +10,21 @@ fi
 URL="$1"
 shift || true
 
-# Scarica il miglior video+audio possibile e li unisce in un MP4
+# Formato di output del container video
+# Default storico: mp4
+# Puoi cambiare via env:
+#   GYTE_VIDEO_FORMAT=mkv gyte-video ...
+VIDEO_FORMAT="${GYTE_VIDEO_FORMAT:-mp4}"
+
+echo ">> Video container: $VIDEO_FORMAT"
+
+# Scarica il miglior video+audio possibile e li unisce nel formato richiesto
 # (remux con ffmpeg, niente ricompressione se non necessario)
 
 yt-dlp \
   --yes-playlist \
   -f "bv*+ba/best" \
-  --merge-output-format mp4 \
+  --merge-output-format "$VIDEO_FORMAT" \
   --no-embed-subs \
   -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
   "$URL" "$@"

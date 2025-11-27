@@ -38,14 +38,13 @@ Per verificare velocemente se l'ambiente è pronto per usare GYTE:
 
 ```bash
 gyte-doctor
-````
+```
 
 Controlla:
-
-* presenza di yt-dlp nel PATH
-* presenza di ffmpeg nel PATH
-* ~/.local/bin nel PATH
-* eventuale runtime JS (node/deno) come dipendenza opzionale!
+  - presenza di yt-dlp nel PATH
+  - presenza di ffmpeg nel PATH
+  - ~/.local/bin nel PATH
+  - eventuale runtime JS (node/deno) come dipendenza opzionale!
 
 Ritorna exit code 0 se le dipendenze essenziali sono OK, 1 altrimenti.
 
@@ -84,14 +83,12 @@ Assicurati che `~/.local/bin` sia nel tuo PATH.
 ### Installare ffmpeg
 
 GYTE usa `ffmpeg` per:
-
-* estrarre solo l'audio dai video (`gyte-audio`)
-* unire audio+video nei file MP4 (`gyte-video`)
+- estrarre solo l'audio dai video (`gyte-audio`)
+- unire audio+video nei file MP4 (`gyte-video`)
 
 Esempi di installazione:
 
 **Ubuntu / Debian**
-
 ```bash
 sudo apt update
 sudo apt install ffmpeg
@@ -99,7 +96,6 @@ ffmpeg -version
 ```
 
 **macOS (Homebrew)**
-
 ```bash
 brew install ffmpeg
 ffmpeg -version
@@ -123,14 +119,14 @@ gyte-transcript 'https://www.youtube.com/watch?v=VIDEO_ID'
 
 Per ogni video ottieni:
 
-* `Uploader - Titolo [VIDEO_ID].en.txt`
+- `Uploader - Titolo [VIDEO_ID].en.txt`  
   → transcript pulito (senza timestamp, numeri di riga, tag HTML, righe vuote / duplicate)
-* `Uploader - Titolo [VIDEO_ID].en.srt`
+- `Uploader - Titolo [VIDEO_ID].en.srt`  
   → sottotitoli in formato SRT “classico” (timestamp `HH:MM:SS,mmm --> HH:MM:SS,mmm`)
-* `Uploader - Titolo [VIDEO_ID].en.md`
+- `Uploader - Titolo [VIDEO_ID].en.md`  
   → versione Markdown, con un `#` iniziale e il testo del transcript
 
-Di default lo script prova le lingue `it,en` (prima italiano, poi inglese).
+Di default lo script prova le lingue `it,en` (prima italiano, poi inglese).  
 Le lingue sono configurabili via env:
 
 ```bash
@@ -179,11 +175,9 @@ gyte-transcript-pl 'https://www.youtube.com/watch?v=AAA&list=PLXXXXX' 4
 
 Cosa fa:
 
-1. Normalizza l'URL in
+1. Normalizza l'URL in  
    `https://www.youtube.com/playlist?list=PLXXXXX`
-
 2. Recupera il titolo della playlist
-
 3. Crea una cartella:
 
    ```text
@@ -191,14 +185,12 @@ Cosa fa:
    ```
 
 4. Dentro quella cartella:
-
-   * salva `urls.txt` con tutte le URL dei video
-   * lancia fino a `MAX_JOBS` processi `gyte-transcript` in parallelo (default: 4)
-   * genera, per ogni video, i file `.txt`, `.srt`, `.md` descritti sopra
-   * genera `playlist.md`, con:
-
-     * `# Playlist: NOME_PLAYLIST` in testa (se disponibile)
-     * una sezione `## ...` per ogni video, in ordine playlist, con il relativo transcript Markdown
+   - salva `urls.txt` con tutte le URL dei video
+   - lancia fino a `MAX_JOBS` processi `gyte-transcript` in parallelo (default: 4)
+   - genera, per ogni video, i file `.txt`, `.srt`, `.md` descritti sopra
+   - genera `playlist.md`, con:
+     - `# Playlist: NOME_PLAYLIST` in testa (se disponibile)
+     - una sezione `## ...` per ogni video, in ordine playlist, con il relativo transcript Markdown
 
 Suggerimento: se YouTube inizia a rispondere con molti HTTP 429 (Too Many Requests), puoi ridurre il parallelismo, ad esempio:
 
@@ -209,8 +201,7 @@ gyte-transcript-pl 'https://www.youtube.com/playlist?list=PLXXXXX' 1
 Oppure usare la modalità sequenziale (`--no-parallel`) con una pausa tra un video e l’altro:
 
 ```bash
-GYTE_SLEEP_BETWEEN=2 \
-  gyte-transcript-pl --no-parallel 'https://www.youtube.com/watch?v=AAA&list=PLXXXXX'
+GYTE_SLEEP_BETWEEN=2   gyte-transcript-pl --no-parallel 'https://www.youtube.com/watch?v=AAA&list=PLXXXXX'
 ```
 
 ---
@@ -227,22 +218,38 @@ gyte-audio 'https://www.youtube.com/watch?v=VIDEO_ID'
 
 Impostazioni di default:
 
-* formato: `mp3`
-* qualità target: ~192 kbps
+- formato: `mp3`
+- qualità target: `192K`
 
-Configurabile via env:
+#### Qualità e formato (audio)
+
+Puoi personalizzare il formato / la qualità in due modi.
+
+**API storica** (ancora supportata):
 
 ```bash
-AUDIO_FORMAT=opus AUDIO_QUALITY=160K gyte-audio 'https://www.youtube.com/watch?v=VIDEO_ID'
+AUDIO_FORMAT=opus AUDIO_QUALITY=160K   gyte-audio 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
-Funziona anche con playlist (`--yes-playlist`), salvando un file audio per ogni video.
+**API GYTE (ha priorità se impostata):**
+
+```bash
+GYTE_AUDIO_FORMAT=opus GYTE_AUDIO_QUALITY=160K   gyte-audio 'https://www.youtube.com/watch?v=VIDEO_ID'
+```
+
+Priorità:
+
+1. `GYTE_AUDIO_FORMAT` / `GYTE_AUDIO_QUALITY`
+2. `AUDIO_FORMAT` / `AUDIO_QUALITY`
+3. default interni dello script (`mp3` / `192K`)
+
+Funziona anche con playlist (`--yes-playlist` è già attivo), salvando un file audio per ogni video.
 
 ---
 
 ### 4. Video completo — `gyte-video`
 
-Scarica il miglior video+audio disponibili e li unisce in un MP4.
+Scarica il miglior video+audio disponibili e li unisce in un unico file.
 
 Esempio:
 
@@ -252,9 +259,19 @@ gyte-video 'https://www.youtube.com/watch?v=VIDEO_ID'
 
 Caratteristiche:
 
-* usa `bv*+ba/best` per combinare best video + best audio
-* `--merge-output-format mp4` → tenta di remuxare in MP4 senza ricodifica
-* zero sottotitoli / zero embed
+- usa `bv*+ba/best` per combinare best video + best audio
+- per default crea file MP4 (remux con ffmpeg, niente ricompressione se non necessario)
+- zero sottotitoli / zero embed
+
+#### Formato di output (video)
+
+Puoi cambiare il formato container di output (quando supportato da yt-dlp/ffmpeg) impostando:
+
+```bash
+GYTE_VIDEO_FORMAT=mkv   gyte-video 'https://www.youtube.com/watch?v=VIDEO_ID'
+```
+
+Se `GYTE_VIDEO_FORMAT` non è impostato, lo script usa il formato predefinito (`mp4`), come nelle versioni precedenti.
 
 Supporta anche playlist:
 
@@ -268,8 +285,8 @@ gyte-video 'https://www.youtube.com/playlist?list=PLXXXXX'
 
 Prende un `.txt` (ad esempio generato da `gyte-transcript`) e lo normalizza in:
 
-* paragrafi compattati (righe spezzate riunite),
-* una **frase per riga** (split su `. ! ?`).
+- paragrafi compattati (righe spezzate riunite),
+- una **frase per riga** (split su `. ! ?`).
 
 Esempi:
 
@@ -286,25 +303,23 @@ Se non specifichi `inputfile` o passi `-`, legge da `stdin`.
 ---
 
 # Esempi GYTE
-
 La cartella `examples` contiene esempi pratici di utilizzo di GYTE:
 
-* `basic-usage.sh`
+- `basic-usage.sh`  
   Esempio di utilizzo base su un singolo video: transcript, audio, video e reflow del testo.
 
-* `mit-ocw-python.sh`
+- `mit-ocw-python.sh`  
   Esempio pensato per una playlist di corso (MIT 6.100L) con estrazione transcript.
 
-* `sample-transcript.raw.txt`
+- `sample-transcript.raw.txt`  
   Esempio di transcript "grezzo" come potrebbe uscire da `gyte-transcript`.
 
-* `sample-transcript.sentences.txt`
+- `sample-transcript.sentences.txt`  
   Lo stesso testo, dopo il passaggio con `gyte-reflow-text` (una frase per riga).
 
 Questi file sono solo dimostrativi: sostituisci le URL e i nomi file con quelli che ti servono nel tuo contesto reale.
 
 ## Come impostare la lingua per le trascrizioni
-
 Per impostazione predefinita, `gyte-transcript` usa:
 
 ```bash
@@ -312,9 +327,8 @@ YT_TRANSCRIPT_LANGS="it,en"
 ```
 
 cioè:
-
-* prova prima a scaricare i sottotitoli in italiano (it);
-* se non disponibili, ripiega su inglese (en).
+- prova prima a scaricare i sottotitoli in italiano (it);
+- se non disponibili, ripiega su inglese (en).
 
 Puoi cambiare questo comportamento impostando l'env prima del comando.
 
@@ -338,12 +352,10 @@ Nota: l’ordine delle lingue in `YT_TRANSCRIPT_LANGS` è significativo: viene u
 ---
 
 ## Roadmap
-
 Vedi il file `ROADMAP.md` per i dettagli.
 
 ---
 
 ## Licenza
-
-Rilasciato sotto licenza MIT.
+Rilasciato sotto licenza MIT.  
 Vedi il file `LICENSE` per i dettagli.
