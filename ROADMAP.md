@@ -28,7 +28,7 @@
    - [x] log un po’ più leggibili (prefisso `>>` / `[INFO]` / `[WARN]`)
    - [x] gestione esplicita del caso:
      - [x] nessun sottotitolo trovato per le lingue richieste
-     - [ ] solo `auto-sub` disponibili → messaggio dedicato
+     - [x] solo `auto-sub` disponibili → messaggio dedicato
      - [x] lingua fallback (es: `it` fallisce → uso `en` e lo dico chiaramente).
 
 6. **Check dipendenze**

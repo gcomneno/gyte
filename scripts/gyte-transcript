@@ -97,8 +97,6 @@ fi
 # così lo script è autosufficiente anche senza config esterni.
 yt_dlp_base_args+=(
   --skip-download          # niente video/audio
-  --write-sub              # sottotitoli "normali"
-  --write-auto-sub         # auto-generati YouTube
   --no-embed-subs          # nessun embed (tanto non c’è video)
   -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s"
 )
@@ -116,30 +114,60 @@ fi
 IFS=',' read -r -a LANGS_ARR <<< "$LANGS_RAW"
 
 success=0
+attempt_index=0
 
 for lang in "${LANGS_ARR[@]}"; do
   # trim spazi
   lang_trim="${lang//[[:space:]]/}"
   [ -z "$lang_trim" ] && continue
 
+  attempt_index=$((attempt_index + 1))
   echo ">> Provo lingua: $lang_trim"
 
+  #
+  # 1) Tentativo sottotitoli "normali"
+  #
   if yt-dlp \
     "${yt_dlp_base_args[@]}" \
+    --write-sub \
     --sub-langs "$lang_trim" \
     "$URL" "$@"
   then
     success=1
-    echo ">> Sottotitoli scaricati con successo per lingua: $lang_trim"
+    if [ "$attempt_index" -gt 1 ]; then
+      echo ">> [INFO] Fallback lingua: $lang_trim (le lingue precedenti non avevano sottotitoli 'normali')" >&2
+    fi
+    echo ">> Sottotitoli 'normali' scaricati con successo per lingua: $lang_trim"
     break
   else
     rc=$?
-    echo ">> [WARN] yt-dlp non ha scaricato sottotitoli per lingua '$lang_trim' (exit $rc)" >&2
+    echo ">> [WARN] Nessun sottotitolo 'normale' per lingua '$lang_trim' (yt-dlp exit $rc)" >&2
+  fi
+
+  #
+  # 2) Fallback auto-sub
+  #
+  echo ">> [INFO] Provo auto-sub per lingua: $lang_trim" >&2
+  if yt-dlp \
+    "${yt_dlp_base_args[@]}" \
+    --write-auto-sub \
+    --sub-langs "$lang_trim" \
+    "$URL" "$@"
+  then
+    success=1
+    if [ "$attempt_index" -gt 1 ]; then
+      echo ">> [INFO] Fallback lingua: $lang_trim (solo auto-sub disponibili, lingue precedenti fallite)" >&2
+    fi
+    echo ">> [WARN] Solo auto-sub disponibili per lingua '$lang_trim' (nessun sottotitolo 'normale')" >&2
+    break
+  else
+    rc=$?
+    echo ">> [WARN] yt-dlp non ha scaricato nemmeno auto-sub per lingua '$lang_trim' (exit $rc)" >&2
   fi
 done
 
 if [ "$success" -eq 0 ]; then
-  echo "⚠️  Attenzione: yt-dlp non è riuscito a scaricare sottotitoli per nessuna delle lingue ($LANGS_RAW)." >&2
+  echo "⚠️  Attenzione: yt-dlp non è riuscito a scaricare sottotitoli (normali né auto-sub) per nessuna delle lingue ($LANGS_RAW)." >&2
   echo "    Controlla se il video ha sottotitoli oppure prova a impostare, ad es.:" >&2
   echo '      YT_TRANSCRIPT_LANGS="en" gyte-transcript "<URL_YT>"' >&2
 fi
