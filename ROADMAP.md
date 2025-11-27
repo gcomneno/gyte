@@ -4,10 +4,10 @@
    - [x] aggregato Markdown `playlist.md` che:
      - [x] legge i file `.md` in `yt-playlist-*`
      - [x] crea un unico `playlist.md` con intestazioni per video (ordine playlist).
-   - [ ] script dedicato tipo `gyte-merge-pl` che:
-     - [ ] legge tutti i `.txt` in `yt-playlist-*`
-     - [ ] crea un unico `PLAYLIST_NAME.merged.txt`
-     - [ ] opzionale: intestazione con `# [N] Titolo video (ID)` prima di ogni blocco.
+   - [x] script dedicato `gyte-merge-pl` che:
+     - [x] legge tutti i `.txt` in `yt-playlist-*`
+     - [x] crea un unico `PLAYLIST_NAME.merged.txt`
+     - [x] opzionale: intestazione con `# [N] Titolo video (ID)` prima di ogni blocco.
 
 2. **Opzioni di output più flessibili**
    - [x] variabile/env o flag `--outdir` per cambiare cartella di destinazione rispetto alla cwd (`GYTE_OUTDIR` + `--outdir` in `gyte-transcript`).
@@ -16,8 +16,8 @@
      - [x] `.md` (con intestazione per video).
 
 3. **Qualità audio/video configurabile “pulita”**
-   - [ ] env tipo `GYTE_AUDIO_QUALITY`, `GYTE_VIDEO_FORMAT`
-   - [ ] documentare 2–3 preset tipici nel README.
+   - [x] env tipo `GYTE_AUDIO_QUALITY`, `GYTE_AUDIO_FORMAT`, `GYTE_VIDEO_FORMAT`
+   - [x] documentare 2–3 preset tipici nel README (sezione audio/video).
 
 4. **“Modo sicuro YouTube”**
    - [x] aggiungere un piccolo throttling opzionale (sleep tra video) nelle playlist per ridurre il rischio di 429:
@@ -47,3 +47,6 @@
      - [ ] uno script `install-gyte.sh` che:
        - [ ] copia/symlinka i `gyte-*` in `~/.local/bin`
        - [ ] stampa riepilogo comandi disponibili.
+
+9. **Modulo AI esterno per traduzione transcript**
+   - [ ] integrazione opzionale con servizio AI esterno.

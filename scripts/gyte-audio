@@ -11,9 +11,42 @@ URL="$1"
 shift || true
 
 # Formato e qualità audio
-# Puoi cambiare via env: AUDIO_FORMAT=ogg AUDIO_QUALITY=160K yt-audio ...
-AUDIO_FORMAT="${AUDIO_FORMAT:-mp3}"
-AUDIO_QUALITY="${AUDIO_QUALITY:-192K}"
+# Default storici:
+#   - formato: mp3
+#   - qualità: 192K
+#
+# API "storica" ancora supportata:
+#   AUDIO_FORMAT, AUDIO_QUALITY
+#
+# API GYTE (ha PRIORITÀ se impostata):
+#   GYTE_AUDIO_FORMAT, GYTE_AUDIO_QUALITY
+
+GYTE_AUDIO_FORMAT="${GYTE_AUDIO_FORMAT-}"
+GYTE_AUDIO_QUALITY="${GYTE_AUDIO_QUALITY-}"
+AUDIO_FORMAT_ENV="${AUDIO_FORMAT-}"
+AUDIO_QUALITY_ENV="${AUDIO_QUALITY-}"
+
+# Se GYTE_* è impostato → ha priorità.
+# Altrimenti usa AUDIO_* storici.
+# Altrimenti usa i default (mp3 / 192K).
+if [ -n "$GYTE_AUDIO_FORMAT" ]; then
+  EFFECTIVE_AUDIO_FORMAT="$GYTE_AUDIO_FORMAT"
+elif [ -n "$AUDIO_FORMAT_ENV" ]; then
+  EFFECTIVE_AUDIO_FORMAT="$AUDIO_FORMAT_ENV"
+else
+  EFFECTIVE_AUDIO_FORMAT="mp3"
+fi
+
+if [ -n "$GYTE_AUDIO_QUALITY" ]; then
+  EFFECTIVE_AUDIO_QUALITY="$GYTE_AUDIO_QUALITY"
+elif [ -n "$AUDIO_QUALITY_ENV" ]; then
+  EFFECTIVE_AUDIO_QUALITY="$AUDIO_QUALITY_ENV"
+else
+  EFFECTIVE_AUDIO_QUALITY="192K"
+fi
+
+echo ">> Audio format  : $EFFECTIVE_AUDIO_FORMAT"
+echo ">> Audio quality : $EFFECTIVE_AUDIO_QUALITY"
 
 # Nota: serve ffmpeg installato, come per yt-dlp in generale
 
@@ -21,8 +54,8 @@ yt-dlp \
   --yes-playlist \
   -f 'bestaudio/best' \
   -x \
-  --audio-format "$AUDIO_FORMAT" \
-  --audio-quality "$AUDIO_QUALITY" \
+  --audio-format "$EFFECTIVE_AUDIO_FORMAT" \
+  --audio-quality "$EFFECTIVE_AUDIO_QUALITY" \
   --no-embed-subs \
   -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
   "$URL" "$@"
