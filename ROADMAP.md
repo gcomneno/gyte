@@ -38,9 +38,9 @@
      - [x] eventuale runtime JS (deno/node) e stampa warning “soft”.
 
 7. **GitHub Actions (CI mini)**
-   - [ ] workflow che:
-     - [ ] fa un `shellcheck` sugli script
-     - [ ] lancia una `dry-run` su una URL di test (senza scaricare media, solo metadata/titoli).
+   - [x] workflow che:
+     - [x] fa un `shellcheck` sugli script
+     - [x] lancia una `dry-run` su una URL di test (senza scaricare media, solo metadata/titoli).
 
 8. **Packaging light**
    - [ ] cartella `install/` con:
