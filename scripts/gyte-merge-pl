@@ -84,8 +84,7 @@ echo ">> File di output: $out_file"
 index=0
 
 # Ordina alfabeticamente i file per poterli avere in ordine stabile
-IFS=$'\n' sorted_files=($(printf '%s\n' "${txt_files[@]}" | sort))
-unset IFS
+mapfile -t sorted_files < <(printf '%s\n' "${txt_files[@]}" | sort)
 
 for f in "${sorted_files[@]}"; do
   index=$((index + 1))

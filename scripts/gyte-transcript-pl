@@ -194,7 +194,7 @@ PLAYLIST_MD="playlist.md"
         first=0
         if printf '%s\n' "$line" | grep -qE '^#[[:space:]]'; then
           # Salta l'header interno del singolo file
-          read -r maybe_blank || true
+          read -r _ || true
           continue
         fi
       fi
