@@ -59,26 +59,30 @@ git clone https://github.com/gcomneno/gyte.git
 cd gyte
 ```
 
-Rendi eseguibili gli script:
+### Installazione rapida (script di install)
+
+Dalla root del progetto:
 
 ```bash
-chmod +x scripts/gyte-*
-```
+chmod +x install/install-gyte.sh
+./install/install-gyte.sh
 
-Opzionale: aggiungili al PATH (esempio con `~/.local/bin`):
+Di default gli script verranno symlinkati in:
 
-```bash
-# dalla root del progetto GYTE
+$HOME/.local/bin
 
-mkdir -p ~/.local/bin
-ln -sf "$(pwd)/scripts/gyte-transcript"    ~/.local/bin/gyte-transcript
-ln -sf "$(pwd)/scripts/gyte-transcript-pl" ~/.local/bin/gyte-transcript-pl
-ln -sf "$(pwd)/scripts/gyte-audio"         ~/.local/bin/gyte-audio
-ln -sf "$(pwd)/scripts/gyte-video"         ~/.local/bin/gyte-video
-ln -sf "$(pwd)/scripts/gyte-reflow-text"   ~/.local/bin/gyte-reflow-text
-```
+Puoi scegliere una directory diversa usando:
 
-Assicurati che `~/.local/bin` sia nel tuo PATH.
+./install/install-gyte.sh --target-dir "/percorso/personalizzato"
+# oppure
+GYTE_INSTALL_DIR="/percorso/personalizzato" ./install/install-gyte.sh
+
+Assicurati che la directory scelta sia nel tuo PATH.
+In caso di dubbi, puoi usare anche:
+
+gyte-doctor
+
+per verificare rapidamente l’ambiente.
 
 ### Installare ffmpeg
 

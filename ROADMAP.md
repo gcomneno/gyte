@@ -43,10 +43,10 @@
      - [x] lancia una `dry-run` su una URL di test (senza scaricare media, solo metadata/titoli).
 
 8. **Packaging light**
-   - [ ] cartella `install/` con:
-     - [ ] uno script `install-gyte.sh` che:
-       - [ ] copia/symlinka i `gyte-*` in `~/.local/bin`
-       - [ ] stampa riepilogo comandi disponibili.
+   - [x] cartella `install/` con:
+     - [x] uno script `install-gyte.sh` che:
+       - [x] copia/symlinka i `gyte-*` in `~/.local/bin`
+       - [x] stampa riepilogo comandi disponibili.
 
 9. **Modulo AI esterno per traduzione transcript**
    - [ ] integrazione opzionale con servizio AI esterno.
