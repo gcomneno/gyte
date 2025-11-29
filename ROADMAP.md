@@ -49,4 +49,6 @@
        - [x] stampa riepilogo comandi disponibili.
 
 9. **Modulo AI esterno per traduzione transcript**
-   - [ ] integrazione opzionale con servizio AI esterno.
+   - [ ] integrazione opzionale con servizio AI esterno per tradurre i transcript (.txt / .md)
+   - [ ] CLI helper dedicato (es. `gyte-ai-translate`) che prende in input file + lingua target
+   - [ ] documentazione nel README su configurazione chiavi/API e limiti d’uso
