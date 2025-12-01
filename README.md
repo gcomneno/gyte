@@ -6,34 +6,47 @@ GYTE è una mini–suite da linea di comando per scaricare da YouTube in modo pu
 * Solo audio (MP3, qualità configurabile)
 * Video completo (MP4, best audio+video uniti)
 * Reflow del testo (una frase per riga, a partire dai transcript)
+* Traduzione assistita via AI dei transcript (tramite comando esterno configurabile)
 
 Basato su [`yt-dlp`](https://github.com/yt-dlp/yt-dlp), con script pensati per corsi interi e playlist lunghe.
-> ⚠️ GYTE non aggira alcuna protezione DRM.
-> Usa YouTube tramite yt-dlp così com'è.
+> ⚠️ GYTE non aggira alcuna protezione DRM.  
+> Usa YouTube tramite yt-dlp così com'è.  
 > Sta a te rispettare Termini di Servizio e copyright dei contenuti.
 
 ---
 
 ## Requisiti
-- Linux / macOS (servono: bash, sed, awk, xargs)
 
-- Python 3 (se usi `yt-dlp` via pip)
+- Linux / macOS (servono: `bash`, `sed`, `awk`, `xargs`)
+- Python 3 (se usi `yt-dlp` via pip)  
   oppure il binario standalone di `yt-dlp` per Linux
-
 - `yt-dlp` nel PATH, ad esempio:
 
+  ```bash
   pip install yt-dlp
+  ```
 
   oppure (esempio binario standalone):
 
-  curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o ~/.local/bin/yt-dlp  
+  ```bash
+  curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp_linux -o ~/.local/bin/yt-dlp
   chmod +x ~/.local/bin/yt-dlp
+  ```
 
 - `ffmpeg` installato (per l'estrazione audio/video)
+
+- Per il modulo AI opzionale (`gyte-translate` + `gyte-ai-openai`):
+  - Python 3
+  - libreria `openai` installata nel tuo ambiente:
+
+    ```bash
+    pip install openai
+    ```
 
 ---
 
 ### 🔍 gyte-doctor
+
 Per verificare velocemente se l'ambiente è pronto per usare GYTE:
 
 ```bash
@@ -41,12 +54,12 @@ gyte-doctor
 ```
 
 Controlla:
-  - presenza di yt-dlp nel PATH
-  - presenza di ffmpeg nel PATH
-  - ~/.local/bin nel PATH
-  - eventuale runtime JS (node/deno) come dipendenza opzionale!
+  - presenza di `yt-dlp` nel PATH
+  - presenza di `ffmpeg` nel PATH
+  - `$HOME/.local/bin` nel PATH
+  - eventuale runtime JS (node/deno) come dipendenza opzionale (soft)
 
-Ritorna exit code 0 se le dipendenze essenziali sono OK, 1 altrimenti.
+Ritorna exit code `0` se le dipendenze essenziali sono OK, `1` altrimenti.
 
 ---
 
@@ -66,21 +79,28 @@ Dalla root del progetto:
 ```bash
 chmod +x install/install-gyte.sh
 ./install/install-gyte.sh
+```
 
 Di default gli script verranno symlinkati in:
 
+```bash
 $HOME/.local/bin
+```
 
 Puoi scegliere una directory diversa usando:
 
+```bash
 ./install/install-gyte.sh --target-dir "/percorso/personalizzato"
 # oppure
 GYTE_INSTALL_DIR="/percorso/personalizzato" ./install/install-gyte.sh
+```
 
-Assicurati che la directory scelta sia nel tuo PATH.
+Assicurati che la directory scelta sia nel tuo `PATH`.  
 In caso di dubbi, puoi usare anche:
 
+```bash
 gyte-doctor
+```
 
 per verificare rapidamente l’ambiente.
 
@@ -88,11 +108,12 @@ per verificare rapidamente l’ambiente.
 
 GYTE usa `ffmpeg` per:
 - estrarre solo l'audio dai video (`gyte-audio`)
-- unire audio+video nei file MP4 (`gyte-video`)
+- unire audio+video nei file (`gyte-video`)
 
 Esempi di installazione:
 
 **Ubuntu / Debian**
+
 ```bash
 sudo apt update
 sudo apt install ffmpeg
@@ -100,6 +121,7 @@ ffmpeg -version
 ```
 
 **macOS (Homebrew)**
+
 ```bash
 brew install ffmpeg
 ffmpeg -version
@@ -205,12 +227,41 @@ gyte-transcript-pl 'https://www.youtube.com/playlist?list=PLXXXXX' 1
 Oppure usare la modalità sequenziale (`--no-parallel`) con una pausa tra un video e l’altro:
 
 ```bash
-GYTE_SLEEP_BETWEEN=2   gyte-transcript-pl --no-parallel 'https://www.youtube.com/watch?v=AAA&list=PLXXXXX'
+GYTE_SLEEP_BETWEEN=2 gyte-transcript-pl --no-parallel 'https://www.youtube.com/watch?v=AAA&list=PLXXXXX'
 ```
 
 ---
 
-### 3. Solo audio — `gyte-audio`
+### 3. Merge transcript di playlist — `gyte-merge-pl`
+
+Dopo aver generato i transcript di una playlist con `gyte-transcript-pl`, puoi unire tutti i `.txt` in un unico file “merged” ordinato:
+
+```bash
+cd yt-playlist-NOME_PLAYLIST
+gyte-merge-pl
+```
+
+Cosa fa:
+
+- cerca tutti i `.txt` nella directory della playlist,
+- li concatena in:
+
+  ```text
+  NOME_PLAYLIST.merged.txt
+  ```
+
+- aggiunge, per ogni blocco, un’intestazione del tipo:
+
+  ```text
+  # [N] Titolo video (ID)
+  # File: filename.txt
+  ```
+
+Utile per avere un unico “malloppone” di testo per l’intera playlist.
+
+---
+
+### 4. Solo audio — `gyte-audio`
 
 Scarica solo l'audio dei video (o playlist) e lo converte in MP3 (o altro formato supportato da ffmpeg).
 
@@ -232,13 +283,13 @@ Puoi personalizzare il formato / la qualità in due modi.
 **API storica** (ancora supportata):
 
 ```bash
-AUDIO_FORMAT=opus AUDIO_QUALITY=160K   gyte-audio 'https://www.youtube.com/watch?v=VIDEO_ID'
+AUDIO_FORMAT=opus AUDIO_QUALITY=160K gyte-audio 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
 **API GYTE (ha priorità se impostata):**
 
 ```bash
-GYTE_AUDIO_FORMAT=opus GYTE_AUDIO_QUALITY=160K   gyte-audio 'https://www.youtube.com/watch?v=VIDEO_ID'
+GYTE_AUDIO_FORMAT=opus GYTE_AUDIO_QUALITY=160K gyte-audio 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
 Priorità:
@@ -251,7 +302,7 @@ Funziona anche con playlist (`--yes-playlist` è già attivo), salvando un file 
 
 ---
 
-### 4. Video completo — `gyte-video`
+### 5. Video completo — `gyte-video`
 
 Scarica il miglior video+audio disponibili e li unisce in un unico file.
 
@@ -272,7 +323,7 @@ Caratteristiche:
 Puoi cambiare il formato container di output (quando supportato da yt-dlp/ffmpeg) impostando:
 
 ```bash
-GYTE_VIDEO_FORMAT=mkv   gyte-video 'https://www.youtube.com/watch?v=VIDEO_ID'
+GYTE_VIDEO_FORMAT=mkv gyte-video 'https://www.youtube.com/watch?v=VIDEO_ID'
 ```
 
 Se `GYTE_VIDEO_FORMAT` non è impostato, lo script usa il formato predefinito (`mp4`), come nelle versioni precedenti.
@@ -285,7 +336,7 @@ gyte-video 'https://www.youtube.com/playlist?list=PLXXXXX'
 
 ---
 
-### 5. Reflow testo — `gyte-reflow-text`
+### 6. Reflow testo — `gyte-reflow-text`
 
 Prende un `.txt` (ad esempio generato da `gyte-transcript`) e lo normalizza in:
 
@@ -306,7 +357,128 @@ Se non specifichi `inputfile` o passi `-`, legge da `stdin`.
 
 ---
 
+### 7. Traduzione AI dei transcript — `gyte-translate`
+
+Usa un comando AI esterno (configurato via `GYTE_AI_CMD`) per tradurre i transcript generati da GYTE (`.txt`, `.md`, ecc.).
+
+Esempio:
+
+```bash
+export GYTE_AI_CMD='my-ai-wrapper --model gpt4'
+gyte-translate --to en lecture.it.txt
+# -> produce: lecture.en.txt
+```
+
+Regole di naming default:
+
+- `lecture.it.txt` → `lecture.en.txt`
+- `notes.md` → `notes.en.md`
+- `raw_transcript` → `raw_transcript.en`
+
+---
+
+## Modulo AI esterno – `gyte-translate`
+
+`gyte-translate` non contiene nessuna logica di AI “interna`: si limita a prendere un file di testo e a passarlo a un comando esterno che legge da `stdin` e scrive il risultato su `stdout`.
+
+Il comando esterno viene configurato tramite:
+
+```bash
+export GYTE_AI_CMD='my-ai-wrapper --model gpt4'
+```
+
+Durante l’esecuzione, GYTE imposta due variabili d’ambiente che il comando può usare:
+
+- `SRC_LANG`    – lingua sorgente (es. `auto`, `it`, `en`)
+- `TARGET_LANG` – lingua di destinazione (es. `en`, `it`, `fr`)
+
+### Uso base
+
+```bash
+gyte-translate --to en lecture.it.txt
+# -> legge lecture.it.txt
+# -> invoca: SRC_LANG=auto TARGET_LANG=en bash -c "$GYTE_AI_CMD"
+# -> salva il risultato in lecture.en.txt
+```
+
+### Opzioni principali
+
+- `--to, --target-lang LANG`  
+  Lingua di destinazione (obbligatoria, oppure via `GYTE_AI_TARGET_LANG`).
+
+- `--from, --source-lang LANG`  
+  Lingua sorgente (default: `auto` o `GYTE_AI_SOURCE_LANG`).
+
+- `--out FILE`  
+  File di output esplicito.  
+  Se omesso, GYTE costruisce il nome da quello di input inserendo `.LANG` prima dell’estensione.
+
+- `--dry-run`  
+  Mostra la configurazione risolta (file, lingue, comando AI) senza eseguire la chiamata.
+
+### Note su chiavi API e limiti
+
+`gyte-translate` **non** gestisce chiavi API, token, retry, throttling, ecc.  
+Tutta la logica di autenticazione e di gestione errori è a carico del comando configurato in `GYTE_AI_CMD`.
+
+Questo permette di usare:
+
+- wrapper personali,
+- CLI ufficiali di provider,
+- script intermedi che spezzano file troppo lunghi, ecc.
+
+---
+
+### Esempio: usare `gyte-translate` con OpenAI (`gyte-ai-openai`)
+
+Il repository include un wrapper di riferimento per OpenAI:
+
+- script: `scripts/gyte-ai-openai`
+- uso: come valore di `GYTE_AI_CMD`
+
+> ⚠️ **Sicurezza API key**
+> - NON salvare mai la tua API key in file, script o repository.
+> - Usala solo tramite variabile d'ambiente `OPENAI_API_KEY`.
+> - Non committare mai uno `export OPENAI_API_KEY="sk-..."` dentro script versionati.
+
+Prerequisiti:
+
+```bash
+pip install openai
+export OPENAI_API_KEY="sk-..."   # NON committare mai questa riga
+```
+
+Poi puoi configurare GYTE così:
+
+```bash
+export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
+
+# esempio: traduci da italiano a inglese
+gyte-translate --from it --to en sample.it.txt
+# -> produce: sample.en.txt
+```
+
+Se non specifichi `--from`, `gyte-translate` usa `auto` come lingua sorgente (o `GYTE_AI_SOURCE_LANG` se impostata).
+
+Puoi verificare la configurazione senza chiamare l’API con `--dry-run`:
+
+```bash
+echo "Ciao mondo, questo è un test." > sample.it.txt
+
+SRC_LANG=it TARGET_LANG=en   gyte-ai-openai --model gpt-4.1-mini --dry-run < sample.it.txt
+```
+
+Il wrapper:
+
+- legge il testo da **stdin**,
+- usa `SRC_LANG` / `TARGET_LANG` (impostate da `gyte-translate`),
+- chiama il modello OpenAI scelto,
+- scrive SOLO il testo tradotto su **stdout** (nessun log mischiato ai dati).
+
+---
+
 # Esempi GYTE
+
 La cartella `examples` contiene esempi pratici di utilizzo di GYTE:
 
 - `basic-usage.sh`  
@@ -321,9 +493,15 @@ La cartella `examples` contiene esempi pratici di utilizzo di GYTE:
 - `sample-transcript.sentences.txt`  
   Lo stesso testo, dopo il passaggio con `gyte-reflow-text` (una frase per riga).
 
+- `ai-openai-translate.sh`  
+  Esempio di utilizzo combinato di `gyte-translate` + `gyte-ai-openai` (senza mai salvare l’API key in chiaro negli script).
+
 Questi file sono solo dimostrativi: sostituisci le URL e i nomi file con quelli che ti servono nel tuo contesto reale.
 
+---
+
 ## Come impostare la lingua per le trascrizioni
+
 Per impostazione predefinita, `gyte-transcript` usa:
 
 ```bash
@@ -331,8 +509,8 @@ YT_TRANSCRIPT_LANGS="it,en"
 ```
 
 cioè:
-- prova prima a scaricare i sottotitoli in italiano (it);
-- se non disponibili, ripiega su inglese (en).
+- prova prima a scaricare i sottotitoli in italiano (`it`);
+- se non disponibili, ripiega su inglese (`en`).
 
 Puoi cambiare questo comportamento impostando l'env prima del comando.
 
@@ -355,75 +533,13 @@ Nota: l’ordine delle lingue in `YT_TRANSCRIPT_LANGS` è significativo: viene u
 
 ---
 
-### 6. Traduzione AI dei transcript — `gyte-translate`
-
-Usa un comando AI esterno (configurato via `GYTE_AI_CMD`) per tradurre i transcript generati da GYTE (`.txt`, `.md`, ecc.).
-
-Esempio:
-```bash
-export GYTE_AI_CMD='my-ai-wrapper --model gpt4'
-gyte-translate --to en lecture.it.txt
-# -> produce: lecture.en.txt
-```
-
-Regole di naming default:
-
-    lecture.it.txt → lecture.en.txt
-    notes.md → notes.en.md
-    raw_transcript → raw_transcript.en
-
-## Modulo AI esterno – `gyte-translate`
-
-`gyte-translate` non contiene nessuna logica di AI “interna”: si limita a prendere un file di testo e a passarlo a un comando esterno che legge da `stdin` e scrive il risultato su `stdout`.
-
-Il comando esterno viene configurato tramite:
-```bash
-export GYTE_AI_CMD='my-ai-wrapper --model gpt4'
-```
-
-Durante l’esecuzione, GYTE imposta due variabili d’ambiente che il comando può usare:
-
-    SRC_LANG – lingua sorgente (es. auto, it, en)
-    TARGET_LANG – lingua di destinazione (es. en, it, fr)
-
-Uso base
-```bash
-gyte-translate --to en lecture.it.txt
-# -> legge lecture.it.txt
-# -> invoca: SRC_LANG=auto TARGET_LANG=en bash -c "$GYTE_AI_CMD"
-# -> salva il risultato in lecture.en.txt
-```
-
-Opzioni
-    --to, --target-lang LANG
-    Lingua di destinazione (obbligatoria, oppure via GYTE_AI_TARGET_LANG).
-
-    --from, --source-lang LANG
-    Lingua sorgente (default: auto o GYTE_AI_SOURCE_LANG).
-
-    --out FILE
-    File di output esplicito.
-    Se omesso, GYTE costruisce il nome da quello di input inserendo .LANG prima dell’estensione.
-
-    --dry-run
-    Mostra la configurazione risolta (file, lingue, comando AI) senza eseguire la chiamata.
-
-#### Note su chiavi API e limiti
-"gyte-translate" non gestisce chiavi API, token, retry, throttling, ecc...
-Tutta la logica di autenticazione e di gestione errori è a carico del comando configurato in GYTE_AI_CMD.
-
-Questo permette di usare:
-  wrapper personali,
-  CLI ufficiali di provider,
-  script intermedi che spezzano file troppo lunghi, ecc.
-
----
-
 ## Roadmap
+
 Vedi il file `ROADMAP.md` per i dettagli.
 
 ---
 
 ## Licenza
+
 Rilasciato sotto licenza MIT.  
 Vedi il file `LICENSE` per i dettagli.
