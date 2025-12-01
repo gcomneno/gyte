@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Uso:
+#   gyte-translate --to <LINGUA_TARGET> FILE
+#
+# Scopo:
+#   Tradurre transcript (.txt / .md / simili) usando un comando AI esterno.
+#
+# Il comando AI viene configurato via env:
+#
+#   GYTE_AI_CMD="comando che legge da stdin e scrive su stdout"
+#
+# Durante l'esecuzione lo script esporta:
+#   SRC_LANG    = lingua sorgente (es. "auto", "it", "en", ...)
+#   TARGET_LANG = lingua di destinazione (es. "en", "it", "fr", ...)
+#
+# Esempio concettuale:
+#   export GYTE_AI_CMD='my-ai-wrapper --model gpt4'
+#   gyte-translate --to en lecture.it.txt
+#
+# Il comando effettivo sarà:
+#   SRC_LANG=it TARGET_LANG=en bash -c "$GYTE_AI_CMD" < lecture.it.txt > lecture.en.txt
+#
+# Nota:
+#   Lo script NON si occupa di autenticazione, chiavi API o throttling:
+#   tutto è demandato al comando indicato in GYTE_AI_CMD.
+
+usage() {
+  cat >&2 << 'EOF'
+Uso:
+  gyte-translate --to <LINGUA_TARGET> [--from <LINGUA_SRC>] [--out FILE] FILE
+
+Opzioni:
+  --to,   --target-lang LANG   lingua di destinazione (es. en, it, fr) (obbligatoria,
+                               oppure via env GYTE_AI_TARGET_LANG)
+  --from, --source-lang LANG   lingua sorgente (default: "auto" o env GYTE_AI_SOURCE_LANG)
+  --out FILE                   file di output (default: derivato da input + .<LANG>)
+  --dry-run                    mostra la configurazione risolta e termina
+  -h, --help                   mostra questo messaggio
+
+Env richieste:
+  GYTE_AI_CMD      comando AI esterno che legge da stdin e scrive su stdout.
+                   Esempio:
+                     export GYTE_AI_CMD='my-ai-wrapper --model gpt4'
+
+Env opzionali:
+  GYTE_AI_SOURCE_LANG   lingua sorgente di default (es. "auto", "it", "en")
+  GYTE_AI_TARGET_LANG   lingua di destinazione di default
+  GYTE_AI_TIMEOUT       (eventuale timeout da gestire nel comando esterno, non usato qui)
+
+Il comando AI viene eseguito così:
+
+  SRC_LANG=<from> TARGET_LANG=<to> bash -c "$GYTE_AI_CMD" < INPUT > OUTPUT
+
+EOF
+}
+
+TARGET_LANG="${GYTE_AI_TARGET_LANG:-}"
+SOURCE_LANG="${GYTE_AI_SOURCE_LANG:-auto}"
+OUT_FILE=""
+DRY_RUN=0
+INPUT_FILE=""
+
+# Parsing argomenti
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --to|--target-lang)
+      if [ $# -lt 2 ]; then
+        echo "Errore: $1 richiede un argomento (es. en, it, fr)" >&2
+        exit 2
+      fi
+      TARGET_LANG="$2"
+      shift 2
+      ;;
+    --from|--source-lang)
+      if [ $# -lt 2 ]; then
+        echo "Errore: $1 richiede un argomento (es. it, en, auto)" >&2
+        exit 2
+      fi
+      SOURCE_LANG="$2"
+      shift 2
+      ;;
+    --out)
+      if [ $# -lt 2 ]; then
+        echo "Errore: --out richiede un file di output" >&2
+        exit 2
+      fi
+      OUT_FILE="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --*)
+      echo "Opzione non riconosciuta: $1" >&2
+      usage
+      exit 2
+      ;;
+    *)
+      # Primo argomento posizionale = file di input
+      if [ -z "$INPUT_FILE" ]; then
+        INPUT_FILE="$1"
+        shift
+      else
+        echo "Argomento non previsto: $1" >&2
+        usage
+        exit 2
+      fi
+      ;;
+  esac
+done
+
+if [ -z "$INPUT_FILE" ]; then
+  echo "Errore: manca il file di input." >&2
+  usage
+  exit 1
+fi
+
+if [ ! -f "$INPUT_FILE" ]; then
+  echo "Errore: file di input non trovato: $INPUT_FILE" >&2
+  exit 1
+fi
+
+if [ -z "$TARGET_LANG" ]; then
+  echo "Errore: lingua di destinazione non specificata." >&2
+  echo "Usa: --to <LANG> oppure imposta GYTE_AI_TARGET_LANG." >&2
+  exit 1
+fi
+
+if [ -z "${GYTE_AI_CMD:-}" ]; then
+  echo "Errore: variabile GYTE_AI_CMD non impostata." >&2
+  echo "Devi indicare un comando AI esterno che legge da stdin e scrive su stdout." >&2
+  echo "Esempio:" >&2
+  echo '  export GYTE_AI_CMD="my-ai-wrapper --model gpt4"' >&2
+  exit 1
+fi
+
+# Determina output di default se non fornito
+if [ -z "$OUT_FILE" ]; then
+  in_base="$(basename "$INPUT_FILE")"
+  case "$in_base" in
+    *.*)
+      name="${in_base%.*}"
+      ext="${in_base##*.}"
+      OUT_FILE="${name}.${TARGET_LANG}.${ext}"
+      ;;
+    *)
+      OUT_FILE="${in_base}.${TARGET_LANG}"
+      ;;
+  esac
+fi
+
+echo ">> gyte-translate"
+echo "   Input file     : $INPUT_FILE"
+echo "   Output file    : $OUT_FILE"
+echo "   Source lang    : $SOURCE_LANG"
+echo "   Target lang    : $TARGET_LANG"
+echo "   GYTE_AI_CMD    : $GYTE_AI_CMD"
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  echo ">> Modalità dry-run: nessuna chiamata al comando AI verrà eseguita."
+  exit 0
+fi
+
+tmp_out="$(mktemp "${OUT_FILE}.tmp.XXXXXX")"
+
+echo ">> Invoco comando AI esterno..."
+if ! SRC_LANG="$SOURCE_LANG" TARGET_LANG="$TARGET_LANG" bash -c "$GYTE_AI_CMD" < "$INPUT_FILE" > "$tmp_out"; then
+  echo "Errore: il comando AI esterno è terminato con errore." >&2
+  rm -f "$tmp_out"
+  exit 1
+fi
+
+mv "$tmp_out" "$OUT_FILE"
+echo ">> Traduzione completata: $OUT_FILE"

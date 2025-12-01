@@ -355,6 +355,70 @@ Nota: l’ordine delle lingue in `YT_TRANSCRIPT_LANGS` è significativo: viene u
 
 ---
 
+### 6. Traduzione AI dei transcript — `gyte-translate`
+
+Usa un comando AI esterno (configurato via `GYTE_AI_CMD`) per tradurre i transcript generati da GYTE (`.txt`, `.md`, ecc.).
+
+Esempio:
+```bash
+export GYTE_AI_CMD='my-ai-wrapper --model gpt4'
+gyte-translate --to en lecture.it.txt
+# -> produce: lecture.en.txt
+```
+
+Regole di naming default:
+
+    lecture.it.txt → lecture.en.txt
+    notes.md → notes.en.md
+    raw_transcript → raw_transcript.en
+
+## Modulo AI esterno – `gyte-translate`
+
+`gyte-translate` non contiene nessuna logica di AI “interna”: si limita a prendere un file di testo e a passarlo a un comando esterno che legge da `stdin` e scrive il risultato su `stdout`.
+
+Il comando esterno viene configurato tramite:
+```bash
+export GYTE_AI_CMD='my-ai-wrapper --model gpt4'
+```
+
+Durante l’esecuzione, GYTE imposta due variabili d’ambiente che il comando può usare:
+
+    SRC_LANG – lingua sorgente (es. auto, it, en)
+    TARGET_LANG – lingua di destinazione (es. en, it, fr)
+
+Uso base
+```bash
+gyte-translate --to en lecture.it.txt
+# -> legge lecture.it.txt
+# -> invoca: SRC_LANG=auto TARGET_LANG=en bash -c "$GYTE_AI_CMD"
+# -> salva il risultato in lecture.en.txt
+```
+
+Opzioni
+    --to, --target-lang LANG
+    Lingua di destinazione (obbligatoria, oppure via GYTE_AI_TARGET_LANG).
+
+    --from, --source-lang LANG
+    Lingua sorgente (default: auto o GYTE_AI_SOURCE_LANG).
+
+    --out FILE
+    File di output esplicito.
+    Se omesso, GYTE costruisce il nome da quello di input inserendo .LANG prima dell’estensione.
+
+    --dry-run
+    Mostra la configurazione risolta (file, lingue, comando AI) senza eseguire la chiamata.
+
+#### Note su chiavi API e limiti
+"gyte-translate" non gestisce chiavi API, token, retry, throttling, ecc...
+Tutta la logica di autenticazione e di gestione errori è a carico del comando configurato in GYTE_AI_CMD.
+
+Questo permette di usare:
+  wrapper personali,
+  CLI ufficiali di provider,
+  script intermedi che spezzano file troppo lunghi, ecc.
+
+---
+
 ## Roadmap
 Vedi il file `ROADMAP.md` per i dettagli.
 
