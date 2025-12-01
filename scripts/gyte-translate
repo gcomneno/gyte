@@ -48,11 +48,15 @@ Env opzionali:
   GYTE_AI_SOURCE_LANG   lingua sorgente di default (es. "auto", "it", "en")
   GYTE_AI_TARGET_LANG   lingua di destinazione di default
   GYTE_AI_TIMEOUT       (eventuale timeout da gestire nel comando esterno, non usato qui)
+  GYTE_AI_MAX_INPUT_BYTES  limite massimo (in byte) per il file di input; se superato, fallisce.
 
 Il comando AI viene eseguito così:
 
   SRC_LANG=<from> TARGET_LANG=<to> bash -c "$GYTE_AI_CMD" < INPUT > OUTPUT
 
+Suggerimento di sicurezza:
+  NON inserire chiavi API direttamente in GYTE_AI_CMD. Usa variabili d'ambiente
+  gestite dal wrapper AI.
 EOF
 }
 
@@ -127,6 +131,10 @@ if [ ! -f "$INPUT_FILE" ]; then
   exit 1
 fi
 
+# Normalizza lingue: rimuove spazi accidentali
+TARGET_LANG="${TARGET_LANG//[[:space:]]/}"
+SOURCE_LANG="${SOURCE_LANG//[[:space:]]/}"
+
 if [ -z "$TARGET_LANG" ]; then
   echo "Errore: lingua di destinazione non specificata." >&2
   echo "Usa: --to <LANG> oppure imposta GYTE_AI_TARGET_LANG." >&2
@@ -139,6 +147,37 @@ if [ -z "${GYTE_AI_CMD:-}" ]; then
   echo "Esempio:" >&2
   echo '  export GYTE_AI_CMD="my-ai-wrapper --model gpt4"' >&2
   exit 1
+fi
+
+# Opzionale: limite massimo di byte per il file di input
+MAX_INPUT_BYTES=""
+if [ -n "${GYTE_AI_MAX_INPUT_BYTES:-}" ]; then
+  case "${GYTE_AI_MAX_INPUT_BYTES}" in
+    *[!0-9]*)
+      echo ">> [WARN] GYTE_AI_MAX_INPUT_BYTES non numerico ('${GYTE_AI_MAX_INPUT_BYTES}'), ignorato." >&2
+      ;;
+    *)
+      MAX_INPUT_BYTES="${GYTE_AI_MAX_INPUT_BYTES}"
+      ;;
+  esac
+fi
+
+if [ -n "$MAX_INPUT_BYTES" ]; then
+  # Usa wc -c per contare i byte in modo portabile
+  file_size="$(wc -c < "$INPUT_FILE" | tr -d '[:space:]')"
+  # In caso di valori strani, evita di proseguire in silenzio
+  case "$file_size" in
+    *[!0-9]*|"")
+      echo ">> [WARN] Dimensione input non determinabile in modo affidabile, ignoro GYTE_AI_MAX_INPUT_BYTES." >&2
+      ;;
+    *)
+      if [ "$file_size" -gt "$MAX_INPUT_BYTES" ]; then
+        echo "Errore: file di input troppo grande (${file_size} byte > limite ${MAX_INPUT_BYTES})." >&2
+        echo "Imposta un valore maggiore in GYTE_AI_MAX_INPUT_BYTES solo se sei consapevole dei costi." >&2
+        exit 1
+      fi
+      ;;
+  esac
 fi
 
 # Determina output di default se non fornito
@@ -156,12 +195,21 @@ if [ -z "$OUT_FILE" ]; then
   esac
 fi
 
+# Deriva un nome "umano" del comando, senza mostrare l'intera stringa (che potrebbe contenere segreti)
+CMD_DISPLAY="${GYTE_AI_CMD%% *}"
+if [ -z "$CMD_DISPLAY" ]; then
+  CMD_DISPLAY="[comando non vuoto impostato in GYTE_AI_CMD]"
+fi
+
 echo ">> gyte-translate"
 echo "   Input file     : $INPUT_FILE"
 echo "   Output file    : $OUT_FILE"
 echo "   Source lang    : $SOURCE_LANG"
 echo "   Target lang    : $TARGET_LANG"
-echo "   GYTE_AI_CMD    : $GYTE_AI_CMD"
+echo "   GYTE_AI_CMD    : $CMD_DISPLAY (definito via env)"
+if [ -n "$MAX_INPUT_BYTES" ]; then
+  echo "   Max input size : ${MAX_INPUT_BYTES} byte (GYTE_AI_MAX_INPUT_BYTES)"
+fi
 
 if [ "$DRY_RUN" -eq 1 ]; then
   echo ">> Modalità dry-run: nessuna chiamata al comando AI verrà eseguita."

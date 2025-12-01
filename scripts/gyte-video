@@ -1,6 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Uso:
+#   gyte-video URL_YOUTUBE [ALTRI_ARG_YT_DLP...]
+#
+# Esempio:
+#   gyte-video "https://www.youtube.com/watch?v=XXXX"
+#
+# Formato di output del container video:
+#   Default storico: mp4
+#   Override via env:
+#     GYTE_VIDEO_FORMAT=mkv gyte-video ...
+
+usage() {
+  cat >&2 << 'EOF'
+Uso:
+  gyte-video URL_YOUTUBE [ALTRI_ARG_YT_DLP...]
+
+Esempi:
+  gyte-video "https://www.youtube.com/watch?v=XXXX"
+  GYTE_VIDEO_FORMAT=mkv gyte-video "https://www.youtube.com/watch?v=XXXX"
+
+Note:
+  - GYTE_VIDEO_FORMAT controlla il container di output (es. mp4, mkv, webm).
+  - Gli argomenti extra vengono passati a yt-dlp, con alcune opzioni pericolose
+    (exec/postprocessor) esplicitamente vietate.
+EOF
+}
+
+if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
 if [ $# -lt 1 ]; then
   echo "Uso: $0 URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
   echo "Esempio: $0 'https://www.youtube.com/watch?v=XXXX'" >&2
@@ -10,6 +42,33 @@ fi
 URL="$1"
 shift || true
 
+if [ -z "$URL" ]; then
+  echo "Errore: URL YouTube mancante." >&2
+  echo "Uso: gyte-video <URL YouTube>" >&2
+  exit 2
+fi
+
+# Sanity check minimo sull'URL
+if [[ "$URL" == -* ]]; then
+  echo "Errore: l'URL non può iniziare con '-' (forse hai invertito ordine argomenti?)." >&2
+  exit 1
+fi
+
+if [[ "$URL" != http://* && "$URL" != https://* ]]; then
+  echo "Errore: URL non valido (deve iniziare con http:// o https://): '$URL'" >&2
+  exit 1
+fi
+
+# Verifica dipendenze di base
+if ! command -v yt-dlp >/dev/null 2>&1; then
+  echo "Errore: 'yt-dlp' non trovato nel PATH. Installalo prima di usare questo script." >&2
+  exit 1
+fi
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "ATTENZIONE: 'ffmpeg' non trovato nel PATH. La fusione audio+video potrebbe fallire." >&2
+fi
+
 # Formato di output del container video
 # Default storico: mp4
 # Puoi cambiare via env:
@@ -18,13 +77,36 @@ VIDEO_FORMAT="${GYTE_VIDEO_FORMAT:-mp4}"
 
 echo ">> Video container: $VIDEO_FORMAT"
 
+# Hardening sugli argomenti extra passati a yt-dlp
+# NON permettiamo opzioni che eseguono comandi o post-processor pericolosi.
+safe_args=()
+while (("$#")); do
+  arg="$1"
+  shift
+  case "$arg" in
+    # Exec e hook vari: vietati
+    --exec|--exec=*|\
+    --exec-before-download|--exec-before-download=*|\
+    --exec-after-download|--exec-after-download=*|\
+    --run-postprocessor|--run-postprocessor=*|\
+    --postprocessor-args|--postprocessor-args=* )
+      echo "Errore: opzione yt-dlp non consentita in gyte-video (potenzialmente pericolosa): $arg" >&2
+      echo "Suggerimento: esegui direttamente 'yt-dlp' se hai davvero bisogno di queste opzioni avanzate." >&2
+      exit 1
+      ;;
+    *)
+      safe_args+=("$arg")
+      ;;
+  esac
+done
+
 # Scarica il miglior video+audio possibile e li unisce nel formato richiesto
 # (remux con ffmpeg, niente ricompressione se non necessario)
-
 yt-dlp \
   --yes-playlist \
   -f "bv*+ba/best" \
   --merge-output-format "$VIDEO_FORMAT" \
   --no-embed-subs \
   -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
-  "$URL" "$@"
+  "$URL" \
+  "${safe_args[@]}"

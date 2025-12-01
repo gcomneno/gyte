@@ -1,60 +1,70 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Esempio di utilizzo di:
-#   - gyte-translate
-#   - gyte-ai-openai
+# Esempio: usare gyte-translate + gyte-ai-openai per tradurre un transcript
 #
-# ATTENZIONE:
-#   - NON inserire mai la tua API key nel codice di questo file.
-#   - NON committare mai una riga del tipo:
-#       export OPENAI_API_KEY="sk-..."
-#   - Imposta sempre la key SOLO nell'ambiente della tua shell.
+# Prerequisiti:
+#   - variabile OPENAI_API_KEY impostata
+#   - comando GYTE_AI_CMD impostato, es.:
+#       export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
+#
+# Uso:
+#   ./ai-openai-translate.sh
 
-########################################
-# 1. Check variabili d'ambiente
-########################################
+usage() {
+  cat >&2 << 'EOF'
+Uso:
+  ./ai-openai-translate.sh
 
-if [ -z "${OPENAI_API_KEY:-}" ]; then
-  echo "[ERROR] OPENAI_API_KEY non impostata." >&2
-  echo "        Esempio (da eseguire nella tua shell, NON da committare):" >&2
-  echo '          export OPENAI_API_KEY="sk-..."' >&2
+Prerequisiti:
+  export OPENAI_API_KEY='sk-...'
+  export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
+
+Questo script traduce:
+  sample-transcript.sentences.txt  ->  sample-transcript.sentences.en.txt
+EOF
+}
+
+if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+INPUT_FILE="${SCRIPT_DIR}/sample-transcript.sentences.txt"
+
+if [ ! -f "$INPUT_FILE" ]; then
+  echo "Errore: file di input non trovato: $INPUT_FILE" >&2
   exit 1
 fi
 
-# Comando AI da usare con gyte-translate
-: "${GYTE_AI_CMD:=gyte-ai-openai --model gpt-4.1-mini}"
-
-########################################
-# 2. File di input di esempio
-########################################
-
-INPUT_FILE="${1:-sample.it.txt}"
-
-if [ ! -f "$INPUT_FILE" ]; then
-  echo "[INFO] File di input non trovato: $INPUT_FILE" >&2
-  echo "[INFO] Creo un esempio minimale in italiano..." >&2
-  cat > "$INPUT_FILE" << 'EOF'
-Ciao mondo! Questo è un piccolo esempio di transcript da tradurre.
-GYTE è una mini-suite da linea di comando per lavorare con video e corsi YouTube.
-EOF
+if [ -z "${GYTE_AI_CMD:-}" ]; then
+  echo "Errore: GYTE_AI_CMD non impostata." >&2
+  echo "Esempio:" >&2
+  echo "  export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'" >&2
+  exit 1
 fi
 
-########################################
-# 3. Esecuzione gyte-translate
-########################################
+if [ -z "${OPENAI_API_KEY:-}" ]; then
+  echo "Errore: OPENAI_API_KEY non impostata (necessaria per gyte-ai-openai)." >&2
+  exit 1
+fi
 
-echo ">> Using GYTE_AI_CMD: $GYTE_AI_CMD"
-echo ">> Input file        : $INPUT_FILE"
-echo ">> Target language   : en"
-
-export GYTE_AI_CMD
-
+echo ">> Dry-run di gyte-translate..."
 gyte-translate \
   --from it \
   --to en \
+  --out "${SCRIPT_DIR}/sample-transcript.sentences.en.txt" \
+  --dry-run \
   "$INPUT_FILE"
 
 echo
-echo ">> Traduzione completata. Controlla il file generato (es. *.en.txt)."
+echo ">> Esecuzione reale..."
+gyte-translate \
+  --from it \
+  --to en \
+  --out "${SCRIPT_DIR}/sample-transcript.sentences.en.txt" \
+  "$INPUT_FILE"
 
+echo ">> Fatto: ${SCRIPT_DIR}/sample-transcript.sentences.en.txt"

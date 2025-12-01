@@ -7,13 +7,34 @@ set -euo pipefail
 #
 # Se non specifichi il file o passi "-", legge da stdin.
 
-if [ $# -gt 1 ]; then
-  echo "Uso: $0 [inputfile]" >&2
-  echo "  Se omesso o '-' legge da stdin" >&2
+usage() {
+  cat >&2 << 'EOF'
+Uso:
+  gyte-reflow-text [inputfile]
+
+Se inputfile è omesso o uguale a "-", il testo viene letto da stdin.
+
+Esempi:
+  gyte-reflow-text input.txt > output.txt
+  cat input.txt | gyte-reflow-text > output.txt
+EOF
+}
+
+# Gestione argomenti:
+# - 0 argomenti      -> usa stdin
+# - 1 argomento      -> file di input o "-"
+# - -h / --help      -> mostra usage
+# - qualsiasi altro  -> errore esplicito
+if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
+  usage
+  exit 0
+elif [ "$#" -gt 1 ]; then
+  echo "Errore: questo comando accetta al massimo un argomento (inputfile)." >&2
+  usage
   exit 1
 fi
 
-if [ $# -eq 0 ] || [ "${1:-}" = "-" ]; then
+if [ "$#" -eq 0 ] || [ "${1:-}" = "-" ]; then
   INPUT="/dev/stdin"
 else
   INPUT="$1"
@@ -23,6 +44,7 @@ else
   fi
 fi
 
+# Normalizzazione CRLF, decodifica HTML di base, merge righe, normalizzazione spazi
 tr -d '\r' < "$INPUT" \
   | sed 's/^"//; s/"$//' \
   | sed -E \

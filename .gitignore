@@ -1,13 +1,116 @@
-# Output di lavoro
+########################################
+# OS / Editor / IDE
+########################################
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Editor vari
+.idea/
+.vscode/
+*.code-workspace
+
+# File temporanei editor
+*~
+*.swp
+*.swo
+
+########################################
+# Python / Build / Tooling
+########################################
+
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Build / packaging
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+
+# pyinstaller / simili
+*.spec
+
+# Tool di test / lint
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+########################################
+# Virtualenv / Config locali / Segreti
+########################################
+
+# virtualenv comuni
+.venv/
+venv/
+env/
+ENV/
+.venv*/
+venv*/
+
+# file env locali (mai in repo, per sicurezza)
+.env
+.env.*
+*.env.local
+
+########################################
+# GYTE – Output runtime / download
+########################################
+
+# Directory create da gyte-transcript-pl
+yt-playlist-*/
+
+# Sottotitoli e formati correlati
 *.vtt
+*.srt
+
+# Log / temporanei generici
 *.log
 *.tmp
 
-# Editor / OS
-.DS_Store
-.idea/
-.vscode/
+# File media scaricati (video/audio)
+*.mp4
+*.mkv
+*.webm
+*.mov
+*.avi
+*.flv
+*.mpg
+*.mpeg
 
-# Python cache eventuale
-__pycache__/
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.opus
+*.flac
+*.wav
 
+########################################
+# Opzionale – Traduzioni generate
+# (lasciate commentate per evitare di
+# nascondere per sbaglio file di testo
+# che vuoi versionare)
+########################################
+
+# Esempio: se usi sempre pattern tipo
+#   lecture.it.txt  ->  lecture.en.txt
+#   notes.md        ->  notes.en.md
+# puoi decidere di ignorare solo gli output
+# decommentando queste righe:
+
+# *.en.txt
+# *.en.md
+# *.it.txt
+# *.it.md
+# *.fr.txt
+# *.fr.md

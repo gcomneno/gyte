@@ -39,7 +39,7 @@ Env:
 EOF
 }
 
-if [ "${1-}" = "-h" ] || [ "${1-}" = "--help" ]; then
+if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
   usage
   exit 0
 fi
@@ -52,15 +52,26 @@ if [ "${1-}" = "--no-parallel" ]; then
   shift
 fi
 
-if [ $# -lt 1 ]; then
+# Ora ci aspettiamo:
+#   PLAYLIST_URL [MAX_JOBS]
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
   usage
   exit 1
 fi
 
 PLAYLIST_URL="$1"
-MAX_JOBS="${2:-4}"
+MAX_JOBS_RAW="${2:-4}"
 
-SLEEP_BETWEEN="${GYTE_SLEEP_BETWEEN:-0}"
+# Sanity check minimo sull'URL
+if [[ "$PLAYLIST_URL" == -* ]]; then
+  echo "Errore: l'URL non può iniziare con '-' (forse hai invertito ordine argomenti?)." >&2
+  exit 1
+fi
+
+if [[ "$PLAYLIST_URL" != http://* && "$PLAYLIST_URL" != https://* ]]; then
+  echo "Errore: URL non valido (deve iniziare con http:// o https://): '$PLAYLIST_URL'" >&2
+  exit 1
+fi
 
 # Normalizza URL → playlist?list=ID
 if [[ "$PLAYLIST_URL" == *"list="* ]]; then
@@ -72,11 +83,52 @@ else
   exit 1
 fi
 
+# Validazione MAX_JOBS (deve essere intero >= 1)
+case "$MAX_JOBS_RAW" in
+  ''|*[!0-9]*)
+    echo ">> [WARN] MAX_JOBS non numerico ('$MAX_JOBS_RAW'), uso valore di default 4." >&2
+    MAX_JOBS=4
+    ;;
+  *)
+    if [ "$MAX_JOBS_RAW" -lt 1 ]; then
+      echo ">> [WARN] MAX_JOBS < 1 ('$MAX_JOBS_RAW'), imposto MAX_JOBS=1." >&2
+      MAX_JOBS=1
+    else
+      MAX_JOBS="$MAX_JOBS_RAW"
+    fi
+    ;;
+esac
+
+# Validazione SLEEP_BETWEEN (deve essere intero >= 0)
+SLEEP_BETWEEN_RAW="${GYTE_SLEEP_BETWEEN:-0}"
+case "$SLEEP_BETWEEN_RAW" in
+  ''|*[!0-9]*)
+    echo ">> [WARN] GYTE_SLEEP_BETWEEN non numerico ('$SLEEP_BETWEEN_RAW'), imposto pausa=0." >&2
+    SLEEP_BETWEEN=0
+    ;;
+  *)
+    SLEEP_BETWEEN="$SLEEP_BETWEEN_RAW"
+    ;;
+esac
+
+# Verifica che yt-dlp sia disponibile
+if ! command -v yt-dlp >/dev/null 2>&1; then
+  echo "Errore: 'yt-dlp' non trovato nel PATH. Installalo prima di usare gyte-transcript-pl." >&2
+  exit 1
+fi
+
 echo "URL playlist normalizzata: $PL_URL"
 echo "Recupero info playlist…"
 
 # Tenta di recuperare il titolo della playlist
-PLAYLIST_TITLE="$(yt-dlp --flat-playlist --print "%(playlist_title)s" --playlist-start 1 --playlist-end 1 "$PL_URL" 2>/dev/null | head -n 1 || true)"
+PLAYLIST_TITLE="$(
+  yt-dlp \
+    --flat-playlist \
+    --print "%(playlist_title)s" \
+    --playlist-start 1 \
+    --playlist-end 1 \
+    "$PL_URL" 2>/dev/null | head -n 1 || true
+)"
 
 if [ -z "$PLAYLIST_TITLE" ]; then
   PLAYLIST_TITLE="NA"
@@ -88,7 +140,10 @@ WORKDIR="yt-playlist-${SAFE_TITLE}"
 
 echo "Cartella di lavoro: $(pwd)/$WORKDIR"
 mkdir -p "$WORKDIR"
-cd "$WORKDIR"
+if ! cd "$WORKDIR"; then
+  echo "Errore: impossibile entrare nella cartella di lavoro: $WORKDIR" >&2
+  exit 1
+fi
 
 echo "Estrazione URL dei video della playlist…"
 yt-dlp --flat-playlist --print "%(webpage_url)s" "$PL_URL" > urls.txt
@@ -190,11 +245,10 @@ PLAYLIST_MD="playlist.md"
     # Copia il contenuto del .md saltando l'eventuale header "# ..."
     first=1
     while IFS= read -r line; do
-      if [ $first -eq 1 ]; then
+      if [ "$first" -eq 1 ]; then
         first=0
         if printf '%s\n' "$line" | grep -qE '^#[[:space:]]'; then
-          # Salta l'header interno del singolo file
-          read -r _ || true
+          # Salta solo la prima riga se è un header
           continue
         fi
       fi

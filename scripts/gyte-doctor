@@ -67,9 +67,17 @@ Exit code:
 EOF
 }
 
+# Gestione argomenti:
+# - nessun argomento -> esecuzione normale
+# - -h / --help      -> mostra usage
+# - qualsiasi altro  -> errore esplicito (niente parametri "magici" ignorati)
 if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
   usage
   exit 0
+elif [ "$#" -gt 0 ]; then
+  echo "Errore: questo comando non accetta argomenti (usa -h o --help per l'uso)." >&2
+  usage
+  exit 1
 fi
 
 print_header
@@ -88,6 +96,7 @@ fi
 
 # 2) ffmpeg
 if have_cmd ffmpeg; then
+  # Prima riga: es. "ffmpeg version 6.1.1-..."
   ver="$(ffmpeg -version 2>/dev/null | head -n1 || echo '?')"
   print_ok "ffmpeg presente ($ver)"
 else
@@ -97,17 +106,17 @@ else
 fi
 
 # 3) ~/.local/bin nel PATH
-LOCAL_BIN="$HOME/.local/bin"
+LOCAL_BIN="${HOME}/.local/bin"
 case ":$PATH:" in
   *":$LOCAL_BIN:"*)
-    print_ok "$HOME/.local/bin è nel PATH"
+    print_ok "${HOME}/.local/bin è nel PATH"
     ;;
   *)
     if [ -d "$LOCAL_BIN" ]; then
-      print_warn "$HOME/.local/bin esiste ma NON è nel PATH."
+      print_warn "${HOME}/.local/bin esiste ma NON è nel PATH."
       echo "       Aggiungi qualcosa tipo: export PATH=\"\$HOME/.local/bin:\$PATH\" nel tuo ~/.bashrc o equivalente." >&2
     else
-      print_warn "$HOME/.local/bin non esiste ancora."
+      print_warn "${HOME}/.local/bin non esiste ancora."
       echo "       Verrà creato automaticamente se segui le istruzioni di installazione di GYTE." >&2
     fi
     ;;

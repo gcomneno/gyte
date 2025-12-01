@@ -131,6 +131,52 @@ Su altri sistemi operativi puoi installare **ffmpeg** tramite il gestore di pacc
 
 ---
 
+### 🚀 Installazione CLI (user-level, no sudo)
+
+GYTE fornisce una serie di comandi gyte-* accessibili da qualunque directory del sistema.
+L’installazione è locale all’utente, non richiede privilegi elevati e non modifica componenti globali.
+
+#### ✔ Installazione standard
+Dalla root del repository:
+  ./install/install-gyte.sh
+
+Questo installer:
+  - individua automaticamente tutti gli script gyte-* nella cartella scripts/,
+  - crea i symlink in ~/.local/bin (o nella directory indicata in $GYTE_INSTALL_DIR),
+  - non usa sudo e non scrive fuori da $HOME,
+  - non scarica né esegue codice remoto.
+
+Al termine, se ~/.local/bin è nel tuo PATH, puoi usare direttamente:
+```bash
+gyte-transcript
+gyte-transcript-pl
+gyte-audio
+gyte-video
+gyte-translate
+gyte-reflow-text
+gyte-merge-pl
+...
+```
+
+#### ✔ Installazione in una directory scelta dall’utente
+Puoi scegliere una directory personalizzata, purché sia sotto $HOME:
+```bash
+  ./install/install-gyte.sh --target-dir "$HOME/bin"
+```
+oppure tramite variabile d’ambiente:
+```bash
+export GYTE_INSTALL_DIR="$HOME/bin"
+./install/install-gyte.sh
+```
+
+#### ⚠ Nota di sicurezza
+L’installer è progettato per ambienti user-level: se scegli cartelle esterne a $HOME, l’operazione potrebbe fallire (e non è consigliata).
+Nessun file viene mai sovrascritto senza che venga segnalato.
+Nessuna chiave API viene letta, usata o memorizzata durante l’installazione.
+Se la directory di destinazione non è nel PATH, lo script mostra un messaggio con la riga da aggiungere al tuo ~/.bashrc.
+
+---
+
 ## Comandi disponibili
 
 ### 1. Trascrizioni — `gyte-transcript`
@@ -429,6 +475,24 @@ Questo permette di usare:
 
 ---
 
+## Integrazione AI (opzionale)
+Alcune funzioni (es. `gyte-ai-openai` + `gyte-translate`) richiedono il client Python `openai`.
+
+Installazione opzionale:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-optional.txt
+```
+
+Poi esporta:
+```bash
+export OPENAI_API_KEY='sk-...'
+export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
+```
+
+---
+
 ### Esempio: usare `gyte-translate` con OpenAI (`gyte-ai-openai`)
 
 Il repository include un wrapper di riferimento per OpenAI:
@@ -530,6 +594,57 @@ YT_TRANSCRIPT_LANGS="de" gyte-transcript "https://www.youtube.com/watch?v=VIDEO_
 ```
 
 Nota: l’ordine delle lingue in `YT_TRANSCRIPT_LANGS` è significativo: viene usata la prima disponibile nell’elenco.
+
+---
+
+# 🔐 Sicurezza & Privacy
+GYTE è progettato secondo i principi DevSecOps minimalisti, con l’obiettivo di evitare rischi comuni nella supply-chain, nell’uso di wrapper AI e negli script shell. Non raccoglie né invia alcun dato proprio: tutto avviene localmente, tramite strumenti standard.
+
+## ✦ Come GYTE protegge l’utente
+
+#### Nessuna chiave nel codice o negli script.
+Tutti i segreti (es. OPENAI_API_KEY) devono essere forniti solo tramite variabili d’ambiente.
+GYTE non stampa mai il valore di tali variabili.
+
+#### Wrapper yt-dlp “blindati”.
+Gli script rifiutano opzioni pericolose come:
+--exec*
+--postprocessor-args
+--run-postprocessor
+
+impedendo l’esecuzione accidentale di comandi arbitrari.
+
+#### Validazione input rigorosa.
+URL devono iniziare con http(s)://
+(così non possono trasformarsi in opzioni nascoste tipo -someflag).
+
+#### Nessuna dipendenza remota eseguita automaticamente.
+Non esistono sequenze curl | sh, script Bootstrap legacy o download silenziosi.
+
+#### Limitazione volontaria degli input AI.
+Gli script di traduzione supportano:
+
+#### GYTE_AI_MAX_INPUT_BYTES
+per evitare di inviare per errore file enormi ai provider AI.
+
+#### File generati esclusi dal repository.
+Il .gitignore protegge il repo da:
+  - media scaricati (mp4/mp3/mkv…),
+  - sottotitoli, log, tmp,
+  - virtualenv e file .env con segreti.
+
+## ✦ Cosa non fa GYTE (per scelta)
+
+- Non gestisce chiavi API. Le usa solo se già impostate nell’ambiente dell’utente.
+- Non esegue comandi arbitrari forniti all’interno di URL, alias o variabili.
+- Non modifica il sistema dell’utente (no installazioni, no permessi elevati).
+
+## ✦ Buone pratiche consigliate
+
+- Mantieni yt-dlp e ffmpeg aggiornati.
+- Non salvare transcript sensibili nelle cartelle versionate.
+- Usa un .env locale (ignorato dal repo) per configurare API key.
+- Prima di usare provider AI, valuta se il contenuto del transcript è adatto a essere inviato a terze parti.
 
 ---
 

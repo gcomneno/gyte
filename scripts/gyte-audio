@@ -8,7 +8,28 @@ if [ $# -lt 1 ]; then
 fi
 
 URL="$1"
-shift || true
+shift
+
+# Sanity check minimo sull'URL
+if [[ "$URL" == -* ]]; then
+  echo "Errore: l'URL non può iniziare con '-' (forse hai invertito ordine argomenti?)." >&2
+  exit 1
+fi
+
+if [[ "$URL" != http://* && "$URL" != https://* ]]; then
+  echo "Errore: URL non valido (deve iniziare con http:// o https://): '$URL'" >&2
+  exit 1
+fi
+
+# Verifica dipendenze di base
+if ! command -v yt-dlp >/dev/null 2>&1; then
+  echo "Errore: 'yt-dlp' non trovato nel PATH. Installalo prima di usare questo script." >&2
+  exit 1
+fi
+
+if ! command -v ffmpeg >/dev/null 2>&1; then
+  echo "ATTENZIONE: 'ffmpeg' non trovato nel PATH. L'estrazione audio potrebbe fallire." >&2
+fi
 
 # Formato e qualità audio
 # Default storici:
@@ -48,6 +69,36 @@ fi
 echo ">> Audio format  : $EFFECTIVE_AUDIO_FORMAT"
 echo ">> Audio quality : $EFFECTIVE_AUDIO_QUALITY"
 
+# Normalizzazione minima qualità (es. 192k → 192K)
+# Non è obbligatorio ma riduce ambiguità.
+case "$EFFECTIVE_AUDIO_QUALITY" in
+  *k) EFFECTIVE_AUDIO_QUALITY="${EFFECTIVE_AUDIO_QUALITY%k}K" ;;
+esac
+
+# Hardening sugli argomenti extra passati a yt-dlp
+# NON permettiamo opzioni che eseguono comandi o post-processor pericolosi.
+safe_args=()
+while (("$#")); do
+  arg="$1"
+  shift
+
+  case "$arg" in
+    # Exec e hook vari: vietati
+    --exec|--exec=*|\
+    --exec-before-download|--exec-before-download=*|\
+    --exec-after-download|--exec-after-download=*|\
+    --run-postprocessor|--run-postprocessor=*|\
+    --postprocessor-args|--postprocessor-args=* )
+      echo "Errore: opzione yt-dlp non consentita in gyte-audio (potenzialmente pericolosa): $arg" >&2
+      echo "Suggerimento: esegui direttamente 'yt-dlp' se hai davvero bisogno di queste opzioni avanzate." >&2
+      exit 1
+      ;;
+    *)
+      safe_args+=("$arg")
+      ;;
+  esac
+done
+
 # Nota: serve ffmpeg installato, come per yt-dlp in generale
 
 yt-dlp \
@@ -57,5 +108,4 @@ yt-dlp \
   --audio-format "$EFFECTIVE_AUDIO_FORMAT" \
   --audio-quality "$EFFECTIVE_AUDIO_QUALITY" \
   --no-embed-subs \
-  -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
-  "$URL" "$@"
+  -o "%(uploader)s - %(title).80s [%(id)s].%(ex

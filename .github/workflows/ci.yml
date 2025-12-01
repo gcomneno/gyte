@@ -8,17 +8,27 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
 jobs:
   lint-shell:
     name: Shellcheck scripts
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install shellcheck
         run: |
+          set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
@@ -67,13 +77,20 @@ jobs:
   yt-dlp-dry-run:
     name: yt-dlp dry-run (metadata only)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Install yt-dlp (via pip)
         run: |
+          set -euo pipefail
           python3 -m pip install --upgrade pip
           python3 -m pip install yt-dlp
 
@@ -81,5 +98,6 @@ jobs:
         env:
           TEST_URL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         run: |
+          set -euo pipefail
           echo ">> Verifico che yt-dlp funzioni in modalità solo metadata..."
           yt-dlp --skip-download --print "%(title)s" --simulate "$TEST_URL"
