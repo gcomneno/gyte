@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import sys
+
+from textwrap import dedent
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+def eprintln(msg: str) -> None:
+    print(msg, file=sys.stderr)
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="gyte-ai-openai",
+        description=(
+            "Wrapper OpenAI per gyte-translate.\n"
+            "Legge il testo da stdin, usa SRC_LANG / TARGET_LANG e stampa il testo tradotto su stdout."
+        ),
+    )
+
+    parser.add_argument(
+        "--model",
+        default=os.environ.get("GYTE_AI_MODEL", "gpt-4.1-mini"),
+        help="nome del modello OpenAI (default: %(default)s o env GYTE_AI_MODEL)",
+    )
+    parser.add_argument(
+        "--system-prompt",
+        help="file di testo con le istruzioni di sistema (prompt di stile); se omesso, usa un default interno.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="mostra la configurazione risolta e termina senza chiamare l'API",
+    )
+
+    return parser.parse_args()
+
+def load_system_prompt(path: str | None) -> str:
+    if path:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError as e:
+            eprintln(f"[ERROR] Impossibile leggere system prompt da '{path}': {e}")
+            sys.exit(1)
+
+    # Default interno
+    return dedent(
+        """
+        You are a careful translation assistant for technical and educational video transcripts.
+
+        - Translate the given text from the source language to the target language.
+        - Preserve meaning, terminology, and structure as much as possible.
+        - Do NOT add explanations, comments, or notes.
+        - Do NOT mention that you are an AI model.
+        - Keep line breaks where they help readability, but do not artificially split every sentence.
+
+        Output ONLY the translated text, with no extra commentary.
+        """
+    ).strip()
+
+def main() -> None:
+    args = parse_args()
+
+    if OpenAI is None:
+        eprintln(
+            "[ERROR] Il pacchetto 'openai' non è installato.\n"
+            "        Installa con: pip install openai"
+        )
+        sys.exit(1)
+
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        eprintln(
+            "[ERROR] Variabile OPENAI_API_KEY non impostata.\n"
+            "        Imposta la tua API key in ambiente, ad es.:\n"
+            "          export OPENAI_API_KEY='sk-...'\n"
+            "        (NON salvarla in file, script o repository.)"
+        )
+        sys.exit(1)
+
+    # Lingue passate da gyte-translate (se presenti)
+    src_lang = os.environ.get("SRC_LANG", "auto")
+    tgt_lang = os.environ.get("TARGET_LANG", "en")
+
+    system_prompt = load_system_prompt(args.system_prompt)
+
+    if args.dry_run:
+        eprintln("gyte-ai-openai (dry-run)")
+        eprintln(f"  Model        : {args.model}")
+        eprintln(f"  SRC_LANG     : {src_lang}")
+        eprintln(f"  TARGET_LANG  : {tgt_lang}")
+        eprintln(f"  System prompt: {'custom file' if args.system_prompt else 'default interno'}")
+        eprintln("  Nota: nessuna chiamata API verrà effettuata.")
+        sys.exit(0)
+
+    # Leggi tutto l'input da stdin
+    input_text = sys.stdin.read()
+    if not input_text.strip():
+        eprintln("[WARN] Input vuoto su stdin. Nessuna chiamata API eseguita.")
+        sys.exit(0)
+
+    client = OpenAI(api_key=api_key)
+
+    user_prompt = dedent(
+        f"""
+        Translate the following text from '{src_lang}' to '{tgt_lang}'.
+
+        Requirements:
+        - Preserve the original meaning and technical terminology.
+        - Do not add explanations or comments.
+        - Output ONLY the translated text.
+
+        --- BEGIN TEXT ---
+        {input_text}
+        --- END TEXT ---
+        """
+    ).strip()
+
+    try:
+        # API Chat Completions stile nuovo client
+        response = client.chat.completions.create(
+            model=args.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+    except Exception as e:
+        eprintln(f"[ERROR] Errore durante la chiamata OpenAI: {e}")
+        sys.exit(1)
+
+    try:
+        content = response.choices[0].message.content
+    except Exception as e:
+        eprintln(f"[ERROR] Risposta OpenAI inattesa / malformata: {e}")
+        sys.exit(1)
+
+    if not content:
+        eprintln("[ERROR] Risposta OpenAI vuota.")
+        sys.exit(1)
+
+    # Output SOLO il testo tradotto, su stdout
+    sys.stdout.write(content)
+    if not content.endswith("\n"):
+        sys.stdout.write("\n")
+
+if __name__ == "__main__":
+    main()
