@@ -45,7 +45,25 @@ jobs:
           printf '  - %s\n' "${shell_files[@]}"
 
           shellcheck "${shell_files[@]}"
-         
+
+      - name: pip-audit (optional AI deps)
+        run: |
+          set -euo pipefail
+
+          if [ ! -f requirements-optional.txt ]; then
+            echo "requirements-optional.txt non trovato, salto pip-audit."
+            exit 0
+          fi
+
+          python -m pip install --upgrade pip
+          pip install pip-audit
+
+          echo "Eseguo pip-audit su requirements-optional.txt (soft)..."
+          # soft: non fallisce la CI anche se trova vulnerabilità
+          if ! pip-audit -r requirements-optional.txt; then
+            echo "pip-audit ha trovato problemi, ma non blocco la CI (soft mode)."
+          fi
+
   yt-dlp-dry-run:
     name: yt-dlp dry-run (metadata only)
     runs-on: ubuntu-latest
@@ -65,4 +83,3 @@ jobs:
         run: |
           echo ">> Verifico che yt-dlp funzioni in modalità solo metadata..."
           yt-dlp --skip-download --print "%(title)s" --simulate "$TEST_URL"
-
