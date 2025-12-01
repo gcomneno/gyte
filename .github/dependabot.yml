@@ -1,15 +1,11 @@
 version: 2
 updates:
-  # Aggiornamenti per GitHub Actions (workflow CI)
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
 
-  # Aggiornamenti per le dipendenze Python opzionali (openai)
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
-    # requirements-optional.txt sarà usato automaticamente
-

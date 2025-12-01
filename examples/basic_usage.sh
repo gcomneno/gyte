@@ -1,54 +1,52 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Esempio di utilizzo base di GYTE su un singolo video.
-# Prima di usare questo script, assicurati che i comandi seguenti siano nel PATH:
-#   - gyte-transcript
-#   - gyte-audio
-#   - gyte-video
-#   - gyte-reflow-text
+# Esempio di uso base GYTE:
+#   - transcript singolo video
+#   - audio
+#   - video
 #
-# Puoi passare l'URL del video come primo argomento:
-#   ./basic-usage.sh "https://www.youtube.com/watch?v=XXXX"
-#
-# Se non passi nulla, usa un segnaposto da sostituire.
+# Sostituisci VIDEO_URL con una URL reale di YouTube prima di eseguire.
 
-VIDEO_URL="${1:-https://www.youtube.com/watch?v=VIDEO_ID_REPLACE_ME}"
+usage() {
+  cat >&2 << 'EOF'
+Uso:
+  ./basic_usage.sh "https://www.youtube.com/watch?v=XXXX"
 
-echo ">> Transcript del video"
+Esempio:
+  ./basic_usage.sh "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+EOF
+}
 
-# Lingua di default: tenta IT, poi EN (comportamento standard GYTE)
-# YT_TRANSCRIPT_LANGS="it,en" gyte-transcript "$VIDEO_URL"
+if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
 
-# Esempi alternativi (decommenta quello che ti serve):
+if [ "$#" -ne 1 ]; then
+  echo "Errore: devi passare esattamente 1 URL YouTube." >&2
+  usage
+  exit 1
+fi
 
-# Solo inglese:
-# YT_TRANSCRIPT_LANGS="en" gyte-transcript "$VIDEO_URL"
+VIDEO_URL="$1"
 
-# Francese con fallback su inglese:
-# YT_TRANSCRIPT_LANGS="fr,en" gyte-transcript "$VIDEO_URL"
+# Sanity check minimo
+if [[ "$VIDEO_URL" != http://* && "$VIDEO_URL" != https://* ]]; then
+  echo "Errore: URL non valido: '$VIDEO_URL' (deve iniziare con http:// o https://)" >&2
+  exit 1
+fi
 
-# Per lasciare il default GYTE (it,en), usa semplicemente:
+echo ">> Transcript (.txt/.srt/.md) con gyte-transcript..."
 gyte-transcript "$VIDEO_URL"
 
 echo
-echo ">> Audio del video (MP3)"
+echo ">> Estrazione audio con gyte-audio..."
 gyte-audio "$VIDEO_URL"
 
 echo
-echo ">> Video completo (MP4)"
+echo ">> Download video con gyte-video..."
 gyte-video "$VIDEO_URL"
 
 echo
-echo ">> Reflow del transcript (se esiste un .txt appena creato)"
-# Prende il primo .txt trovato nella directory corrente
-TXT_FILE="$(ls *.txt 2>/dev/null | head -n 1 || true)"
-
-if [ -n "${TXT_FILE:-}" ]; then
-  OUT_FILE="${TXT_FILE%.txt}.sentences.txt"
-  echo "   - Input : $TXT_FILE"
-  echo "   - Output: $OUT_FILE"
-  gyte-reflow-text "$TXT_FILE" > "$OUT_FILE"
-else
-  echo "   Nessun file .txt trovato nella cartella corrente."
-fi
+echo ">> Esempio completato."

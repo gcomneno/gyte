@@ -1,3 +1,3 @@
-# Dipendenze opzionali per feature AI (gyte-ai-openai)
+# requirements-optional.txt
+# Dipendenze opzionali per l'integrazione AI (gyte-ai-openai)
 openai>=1.0.0,<2.0.0
-

@@ -38,9 +38,18 @@ Esempi:
 EOF
 }
 
+# Gestione argomenti:
+# - 0 argomenti      -> usa la directory corrente
+# - 1 argomento      -> directory playlist
+# - -h / --help      -> mostra usage
+# - qualsiasi altro  -> errore esplicito
 if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
   usage
   exit 0
+elif [ "$#" -gt 1 ]; then
+  echo "Errore: questo comando accetta al massimo un argomento (PLAYLIST_DIR)." >&2
+  usage
+  exit 1
 fi
 
 PLAYLIST_DIR="${1:-.}"
@@ -50,7 +59,19 @@ if [ ! -d "$PLAYLIST_DIR" ]; then
   exit 1
 fi
 
-cd "$PLAYLIST_DIR"
+# Entra nella directory della playlist, fallendo in modo esplicito se non riesce
+if ! cd "$PLAYLIST_DIR"; then
+  echo "Errore: impossibile entrare nella directory: $PLAYLIST_DIR" >&2
+  exit 1
+fi
+
+# Determina il nome playlist da basename della directory
+dir_name="$(basename "$(pwd)")"
+playlist_name="${dir_name#yt-playlist-}"
+out_file="${playlist_name}.merged.txt"
+
+echo ">> Directory playlist: $(pwd)"
+echo ">> File di output previsto: $out_file"
 
 # Trova i .txt (transcript) nella directory corrente
 shopt -s nullglob
@@ -62,14 +83,7 @@ if [ "${#txt_files[@]}" -eq 0 ]; then
   exit 0
 fi
 
-# Determina il nome playlist da basename della directory
-dir_name="$(basename "$(pwd)")"
-playlist_name="${dir_name#yt-playlist-}"
-out_file="${playlist_name}.merged.txt"
-
-echo ">> Directory playlist: $(pwd)"
 echo ">> Trovati ${#txt_files[@]} file .txt"
-echo ">> File di output: $out_file"
 
 # Sovrascrive eventuale file esistente
 : > "$out_file"
@@ -87,9 +101,15 @@ index=0
 mapfile -t sorted_files < <(printf '%s\n' "${txt_files[@]}" | sort)
 
 for f in "${sorted_files[@]}"; do
+  filename="$f"
+
+  # Evita di re-includere il file di merge, se è già presente nella directory
+  if [ "$filename" = "$out_file" ]; then
+    continue
+  fi
+
   index=$((index + 1))
 
-  filename="$f"
   base="${filename%.txt}"
 
   # Prova a pulire suffix lingua (es. .en, .it) se presente

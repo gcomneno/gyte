@@ -22,13 +22,34 @@ set -euo pipefail
 #   - .srt  : da .vtt → reformatting timestamp in stile SRT
 #   - .md   : Markdown, un file per video (stesso basename del .txt)
 
+usage() {
+  cat >&2 << 'EOF'
+Uso:
+  gyte-transcript [--outdir DIR] URL_YOUTUBE [ALTRI_ARG_YT_DLP...]
+
+Esempi:
+  gyte-transcript "https://www.youtube.com/watch?v=XXXX"
+  gyte-transcript --outdir "transcripts" "https://www.youtube.com/watch?v=XXXX"
+  GYTE_OUTDIR="transcripts" gyte-transcript "https://www.youtube.com/watch?v=XXXX"
+
+Note:
+  - YT_TRANSCRIPT_LANGS controlla l'ordine delle lingue preferite (es. "it,en").
+  - GYTE_YTDLP_QUIET=1 abilita la modalità quiet di yt-dlp.
+EOF
+}
+
 # --------------------------
 # Gestione --outdir / GYTE_OUTDIR
 # --------------------------
 OUTDIR="${GYTE_OUTDIR:-.}"
 
+# Parsing opzioni iniziali
 while [ $# -gt 0 ]; do
   case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
     --outdir)
       if [ $# -lt 2 ]; then
         echo "Errore: --outdir richiede un argomento" >&2
@@ -66,13 +87,34 @@ if [ -z "$URL" ]; then
   exit 2
 fi
 
+# Sanity check minimo sull'URL
+if [[ "$URL" == -* ]]; then
+  echo "Errore: l'URL non può iniziare con '-' (forse hai invertito ordine argomenti?)." >&2
+  exit 1
+fi
+
+if [[ "$URL" != http://* && "$URL" != https://* ]]; then
+  echo "Errore: URL non valido (deve iniziare con http:// o https://): '$URL'" >&2
+  exit 1
+fi
+
+# Verifica che yt-dlp sia disponibile
+if ! command -v yt-dlp >/dev/null 2>&1; then
+  echo "Errore: 'yt-dlp' non trovato nel PATH. Installalo prima di usare gyte-transcript." >&2
+  exit 1
+fi
+
+# Prepara directory di output
 mkdir -p "$OUTDIR"
-cd "$OUTDIR"
+if ! cd "$OUTDIR"; then
+  echo "Errore: impossibile entrare nella directory di output: $OUTDIR" >&2
+  exit 1
+fi
 
 LANGS_RAW="${YT_TRANSCRIPT_LANGS:-it,en}"
 QUIET_FLAG="${GYTE_YTDLP_QUIET:-0}"
 
-echo ">> Output directory: $OUTDIR"
+echo ">> Output directory: $(pwd)"
 echo ">> Scarico sottotitoli (ordine preferenze: $LANGS_RAW) da: $URL"
 
 # Config file opzionali per yt-dlp
@@ -101,14 +143,39 @@ yt_dlp_base_args+=(
   -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s"
 )
 
-# Modalità quiet opzionale
+# Modalità quiet opzionale (solo se valore valido)
 if [ "$QUIET_FLAG" = "1" ]; then
   yt_dlp_base_args+=(
     -q            # quiet: solo errori
     --no-warnings # niente WARN
   )
   echo ">> [INFO] Modalità quiet attiva per yt-dlp (GYTE_YTDLP_QUIET=1)" >&2
+elif [ "$QUIET_FLAG" != "0" ]; then
+  echo ">> [WARN] GYTE_YTDLP_QUIET ha un valore non riconosciuto ('$QUIET_FLAG'), uso modalità standard." >&2
 fi
+
+# Hardening sugli argomenti extra passati a yt-dlp
+# NON permettiamo opzioni che eseguono comandi o post-processor pericolosi.
+safe_extra_args=()
+while (("$#")); do
+  arg="$1"
+  shift
+  case "$arg" in
+    # Exec e hook vari: vietati in GYTE
+    --exec|--exec=*|\
+    --exec-before-download|--exec-before-download=*|\
+    --exec-after-download|--exec-after-download=*|\
+    --run-postprocessor|--run-postprocessor=*|\
+    --postprocessor-args|--postprocessor-args=* )
+      echo "Errore: opzione yt-dlp non consentita in gyte-transcript (potenzialmente pericolosa): $arg" >&2
+      echo "Suggerimento: esegui direttamente 'yt-dlp' se hai davvero bisogno di queste opzioni avanzate." >&2
+      exit 1
+      ;;
+    *)
+      safe_extra_args+=("$arg")
+      ;;
+  esac
+done
 
 # Split delle lingue su virgola
 IFS=',' read -r -a LANGS_ARR <<< "$LANGS_RAW"
@@ -131,7 +198,8 @@ for lang in "${LANGS_ARR[@]}"; do
     "${yt_dlp_base_args[@]}" \
     --write-sub \
     --sub-langs "$lang_trim" \
-    "$URL" "$@"
+    "$URL" \
+    "${safe_extra_args[@]}"
   then
     success=1
     if [ "$attempt_index" -gt 1 ]; then
@@ -152,7 +220,8 @@ for lang in "${LANGS_ARR[@]}"; do
     "${yt_dlp_base_args[@]}" \
     --write-auto-sub \
     --sub-langs "$lang_trim" \
-    "$URL" "$@"
+    "$URL" \
+    "${safe_extra_args[@]}"
   then
     success=1
     if [ "$attempt_index" -gt 1 ]; then

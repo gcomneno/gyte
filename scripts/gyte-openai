@@ -2,7 +2,6 @@
 import argparse
 import os
 import sys
-
 from textwrap import dedent
 
 try:
@@ -10,8 +9,18 @@ try:
 except ImportError:
     OpenAI = None
 
+# Limite massimo di caratteri accettati in input (fail-fast per input "mostruosi").
+# Override tramite env: GYTE_AI_MAX_INPUT_CHARS
+MAX_INPUT_CHARS_DEFAULT = 200_000
+try:
+    MAX_INPUT_CHARS = int(os.environ.get("GYTE_AI_MAX_INPUT_CHARS", MAX_INPUT_CHARS_DEFAULT))
+except ValueError:
+    MAX_INPUT_CHARS = MAX_INPUT_CHARS_DEFAULT
+
+
 def eprintln(msg: str) -> None:
     print(msg, file=sys.stderr)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -39,6 +48,7 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
+
 def load_system_prompt(path: str | None) -> str:
     if path:
         try:
@@ -63,6 +73,31 @@ def load_system_prompt(path: str | None) -> str:
         """
     ).strip()
 
+
+def resolve_api_key() -> str:
+    raw_key = os.environ.get("OPENAI_API_KEY")
+    if not raw_key:
+        eprintln(
+            "[ERROR] Variabile OPENAI_API_KEY non impostata.\n"
+            "        Imposta la tua API key in ambiente, ad es.:\n"
+            "          export OPENAI_API_KEY='sk-...'\n"
+            "        (NON salvarla in file, script o repository.)"
+        )
+        sys.exit(1)
+
+    api_key = raw_key.strip()
+
+    # Rifiuta placeholder palesi per evitare incidenti tipo 'sk-...' copiato dai README.
+    if api_key in {"sk-...", "YOUR_API_KEY_HERE", "INSERT_YOUR_KEY_HERE"}:
+        eprintln(
+            "[ERROR] OPENAI_API_KEY sembra un placeholder (es. 'sk-...' o simili).\n"
+            "        Configura una chiave reale nel tuo ambiente prima di usare gyte-ai-openai."
+        )
+        sys.exit(1)
+
+    return api_key
+
+
 def main() -> None:
     args = parse_args()
 
@@ -73,15 +108,7 @@ def main() -> None:
         )
         sys.exit(1)
 
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        eprintln(
-            "[ERROR] Variabile OPENAI_API_KEY non impostata.\n"
-            "        Imposta la tua API key in ambiente, ad es.:\n"
-            "          export OPENAI_API_KEY='sk-...'\n"
-            "        (NON salvarla in file, script o repository.)"
-        )
-        sys.exit(1)
+    api_key = resolve_api_key()
 
     # Lingue passate da gyte-translate (se presenti)
     src_lang = os.environ.get("SRC_LANG", "auto")
@@ -95,6 +122,7 @@ def main() -> None:
         eprintln(f"  SRC_LANG     : {src_lang}")
         eprintln(f"  TARGET_LANG  : {tgt_lang}")
         eprintln(f"  System prompt: {'custom file' if args.system_prompt else 'default interno'}")
+        eprintln(f"  Max input    : {MAX_INPUT_CHARS} chars")
         eprintln("  Nota: nessuna chiamata API verrà effettuata.")
         sys.exit(0)
 
@@ -103,6 +131,14 @@ def main() -> None:
     if not input_text.strip():
         eprintln("[WARN] Input vuoto su stdin. Nessuna chiamata API eseguita.")
         sys.exit(0)
+
+    if len(input_text) > MAX_INPUT_CHARS:
+        eprintln(
+            f"[ERROR] Input troppo grande ({len(input_text)} caratteri). "
+            f"Limite corrente: {MAX_INPUT_CHARS} caratteri.\n"
+            "        Imposta GYTE_AI_MAX_INPUT_CHARS in ambiente se devi aumentarlo consapevolmente."
+        )
+        sys.exit(1)
 
     client = OpenAI(api_key=api_key)
 
@@ -131,6 +167,7 @@ def main() -> None:
             ],
         )
     except Exception as e:
+        # Non includiamo mai nell'errore nulla che possa contenere la chiave o il testo completo.
         eprintln(f"[ERROR] Errore durante la chiamata OpenAI: {e}")
         sys.exit(1)
 
