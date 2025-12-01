@@ -1,0 +1,3 @@
+# Dipendenze opzionali per feature AI (gyte-ai-openai)
+openai>=1.0.0,<2.0.0
+
