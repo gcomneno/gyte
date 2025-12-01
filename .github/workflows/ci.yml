@@ -22,13 +22,30 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck
 
-      - name: Run shellcheck on scripts
+      - name: Shellcheck scripts
         run: |
-          shellcheck scripts/gyte-* || {
-            echo "::error ::Shellcheck ha trovato problemi negli script."
-            exit 1
-          }
+          set -euo pipefail
 
+          shopt -s nullglob
+          shell_files=()
+          for f in scripts/gyte-*; do
+            # Consideriamo solo gli script con shebang shell
+            if head -n 1 "$f" | grep -qE '^#!.*/(ba|da|k)?sh\b'; then
+              shell_files+=("$f")
+            fi
+          done
+          shopt -u nullglob
+
+          if [ "${#shell_files[@]}" -eq 0 ]; then
+            echo "Nessun script shell trovato in scripts/gyte-* da controllare con shellcheck."
+            exit 0
+          fi
+
+          echo "Eseguo shellcheck sui seguenti file:"
+          printf '  - %s\n' "${shell_files[@]}"
+
+          shellcheck "${shell_files[@]}"
+         
   yt-dlp-dry-run:
     name: yt-dlp dry-run (metadata only)
     runs-on: ubuntu-latest
