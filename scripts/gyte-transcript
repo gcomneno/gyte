@@ -18,7 +18,7 @@ set -euo pipefail
 #   GYTE_YTDLP_QUIET=1  -> passa -q --no-warnings a yt-dlp
 #
 # Formati generati:
-#   - .txt  : transcript pulito (come in versione precedente)
+#   - .txt  : transcript pulito
 #   - .srt  : da .vtt → reformatting timestamp in stile SRT
 #   - .md   : Markdown, un file per video (stesso basename del .txt)
 
@@ -139,6 +139,8 @@ fi
 # così lo script è autosufficiente anche senza config esterni.
 yt_dlp_base_args+=(
   --skip-download          # niente video/audio
+  --convert-subs vtt       # normalizza i sottotitoli in .vtt
+  --extractor-args "youtube:player_client=default"
   --no-embed-subs          # nessun embed (tanto non c’è video)
   -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s"
 )
@@ -191,6 +193,9 @@ for lang in "${LANGS_ARR[@]}"; do
   attempt_index=$((attempt_index + 1))
   echo ">> Provo lingua: $lang_trim"
 
+  # Conteggio .vtt prima dei tentativi per questa lingua
+  vtt_before_lang=$(find . -maxdepth 1 -type f -name '*.vtt' | wc -l)
+
   #
   # 1) Tentativo sottotitoli "normali"
   #
@@ -201,12 +206,17 @@ for lang in "${LANGS_ARR[@]}"; do
     "$URL" \
     "${safe_extra_args[@]}"
   then
-    success=1
-    if [ "$attempt_index" -gt 1 ]; then
-      echo ">> [INFO] Fallback lingua: $lang_trim (le lingue precedenti non avevano sottotitoli 'normali')" >&2
+    vtt_after_lang=$(find . -maxdepth 1 -type f -name '*.vtt' | wc -l)
+    if [ "$vtt_after_lang" -gt "$vtt_before_lang" ]; then
+      success=1
+      if [ "$attempt_index" -gt 1 ]; then
+        echo ">> [INFO] Fallback lingua: $lang_trim (le lingue precedenti non avevano sottotitoli 'normali')" >&2
+      fi
+      echo ">> Sottotitoli 'normali' scaricati con successo per lingua: $lang_trim"
+      break
+    else
+      echo ">> [WARN] yt-dlp è uscito con codice 0 ma non ha creato nuovi .vtt per lingua '$lang_trim' (sottotitoli 'normali')." >&2
     fi
-    echo ">> Sottotitoli 'normali' scaricati con successo per lingua: $lang_trim"
-    break
   else
     rc=$?
     echo ">> [WARN] Nessun sottotitolo 'normale' per lingua '$lang_trim' (yt-dlp exit $rc)" >&2
@@ -216,6 +226,9 @@ for lang in "${LANGS_ARR[@]}"; do
   # 2) Fallback auto-sub
   #
   echo ">> [INFO] Provo auto-sub per lingua: $lang_trim" >&2
+
+  vtt_before_lang_auto=$(find . -maxdepth 1 -type f -name '*.vtt' | wc -l)
+
   if yt-dlp \
     "${yt_dlp_base_args[@]}" \
     --write-auto-sub \
@@ -223,12 +236,17 @@ for lang in "${LANGS_ARR[@]}"; do
     "$URL" \
     "${safe_extra_args[@]}"
   then
-    success=1
-    if [ "$attempt_index" -gt 1 ]; then
-      echo ">> [INFO] Fallback lingua: $lang_trim (solo auto-sub disponibili, lingue precedenti fallite)" >&2
+    vtt_after_lang_auto=$(find . -maxdepth 1 -type f -name '*.vtt' | wc -l)
+    if [ "$vtt_after_lang_auto" -gt "$vtt_before_lang_auto" ]; then
+      success=1
+      if [ "$attempt_index" -gt 1 ]; then
+        echo ">> [INFO] Fallback lingua: $lang_trim (solo auto-sub disponibili, lingue precedenti fallite)" >&2
+      fi
+      echo ">> [WARN] Solo auto-sub disponibili per lingua '$lang_trim' (nessun sottotitolo 'normale')." >&2
+      break
+    else
+      echo ">> [WARN] yt-dlp è uscito con codice 0 ma non ha creato nuovi .vtt per lingua '$lang_trim' (auto-sub)." >&2
     fi
-    echo ">> [WARN] Solo auto-sub disponibili per lingua '$lang_trim' (nessun sottotitolo 'normale')" >&2
-    break
   else
     rc=$?
     echo ">> [WARN] yt-dlp non ha scaricato nemmeno auto-sub per lingua '$lang_trim' (exit $rc)" >&2
@@ -238,7 +256,7 @@ done
 if [ "$success" -eq 0 ]; then
   echo "⚠️  Attenzione: yt-dlp non è riuscito a scaricare sottotitoli (normali né auto-sub) per nessuna delle lingue ($LANGS_RAW)." >&2
   echo "    Controlla se il video ha sottotitoli oppure prova a impostare, ad es.:" >&2
-  echo '      YT_TRANSCRIPT_LANGS="en" gyte-transcript "<URL_YT>"' >&2
+  echo '      YT_TRANSCRIPT_LANGS="en,en-orig" gyte-transcript "<URL_YT>"' >&2
 fi
 
 echo ">> Pulizia file .vtt -> .txt/.srt/.md (se presenti)..."
@@ -251,7 +269,7 @@ for f in *.vtt; do
   srt_out="${base_no_vtt}.srt"
   md_out="${base_no_vtt}.md"
 
-  # 1) .txt pulito (logica precedente, invariata)
+  # 1) .txt pulito
   sed -E \
     -e '/^WEBVTT/d' \
     -e '/^Kind:/d' \
