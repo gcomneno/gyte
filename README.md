@@ -7,6 +7,7 @@ GYTE è una mini–suite da linea di comando per scaricare da YouTube in modo pu
 * Video completo (MP4, best audio+video uniti)
 * Reflow del testo (una frase per riga, a partire dai transcript)
 * Traduzione assistita via AI dei transcript (tramite comando esterno configurabile)
+* Trascrizione locale di file audio/video via Whisper (opzionale)
 
 Basato su [`yt-dlp`](https://github.com/yt-dlp/yt-dlp), con script pensati per corsi interi e playlist lunghe.
 > ⚠️ GYTE non aggira alcuna protezione DRM.  
@@ -35,12 +36,22 @@ Basato su [`yt-dlp`](https://github.com/yt-dlp/yt-dlp), con script pensati per c
 
 - `ffmpeg` installato (per l'estrazione audio/video)
 
-- Per il modulo AI opzionale (`gyte-translate` + `gyte-openai`):
+- Per il modulo AI opzionale (`gyte-translate` + `gyte-ai-openai`):
   - Python 3
   - libreria `openai` installata nel tuo ambiente:
 
     ```bash
     pip install openai
+    ```
+
+- Per la trascrizione locale con Whisper (`gyte-whisper-local`, opzionale):
+  - Python 3
+  - tool Whisper CLI installato (ad esempio via `openai-whisper` in un venv):
+
+    ```bash
+    python3 -m venv ~/venv/whisper
+    source ~/venv/whisper/bin/activate
+    pip install -U openai-whisper
     ```
 
 ---
@@ -137,22 +148,18 @@ GYTE fornisce una serie di comandi gyte-* accessibili da qualunque directory del
 L’installazione è locale all’utente, non richiede privilegi elevati e non modifica componenti globali.
 
 #### ✔ Installazione standard
-
 Dalla root del repository:
-
 ```bash
 ./install/install-gyte.sh
 ```
 
 Questo installer:
+  - individua automaticamente tutti gli script `gyte-*` nella cartella `scripts/`,
+  - crea i symlink in `~/.local/bin` (o nella directory indicata in `$GYTE_INSTALL_DIR`),
+  - non usa `sudo` e non scrive fuori da `$HOME`,
+  - non scarica né esegue codice remoto.
 
-- individua automaticamente tutti gli script `gyte-*` nella cartella `scripts/`,
-- crea i symlink in `~/.local/bin` (o nella directory indicata in `$GYTE_INSTALL_DIR`),
-- non usa `sudo` e non scrive fuori da `$HOME`,
-- non scarica né esegue codice remoto.
-
-Al termine, se `~/.local/bin` è nel tuo PATH, puoi usare direttamente:
-
+Al termine, se `~/.local/bin` è nel tuo `PATH`, puoi usare direttamente:
 ```bash
 gyte-transcript
 gyte-transcript-pl
@@ -161,30 +168,26 @@ gyte-video
 gyte-translate
 gyte-reflow-text
 gyte-merge-pl
+gyte-whisper-local
 ...
 ```
 
 #### ✔ Installazione in una directory scelta dall’utente
-
 Puoi scegliere una directory personalizzata, purché sia sotto `$HOME`:
-
 ```bash
 ./install/install-gyte.sh --target-dir "$HOME/bin"
 ```
-
 oppure tramite variabile d’ambiente:
-
 ```bash
 export GYTE_INSTALL_DIR="$HOME/bin"
 ./install/install-gyte.sh
 ```
 
 #### ⚠ Nota di sicurezza
-
-L’installer è progettato per ambienti user-level: se scegli cartelle esterne a `$HOME`, l’operazione potrebbe fallire (e non è consigliata).  
-Nessun file viene mai sovrascritto senza che venga segnalato.  
-Nessuna chiave API viene letta, usata o memorizzata durante l’installazione.  
-Se la directory di destinazione non è nel PATH, lo script mostra un messaggio con la riga da aggiungere al tuo `~/.bashrc`.
+L’installer è progettato per ambienti user-level: se scegli cartelle esterne a `$HOME`, l’operazione potrebbe fallire (e non è consigliata).
+Nessun file viene mai sovrascritto senza che venga segnalato.
+Nessuna chiave API viene letta, usata o memorizzata durante l’installazione.
+Se la directory di destinazione non è nel `PATH`, lo script mostra un messaggio con la riga da aggiungere al tuo `~/.bashrc`.
 
 ---
 
@@ -434,6 +437,71 @@ Regole di naming default:
 
 ---
 
+### 8. Trascrizione locale MP4/audio — `gyte-whisper-local`
+
+`gyte-whisper-local` usa un comando di speech-to-text locale (di default `whisper`) per estrarre transcript da file **locali** (`.mp4`, `.mp3`, ecc.), senza passare da YouTube.
+
+Esempio base:
+
+```bash
+gyte-whisper-local lesson1.mp4
+```
+
+Cosa fa:
+
+- verifica che il file esista
+- chiama il comando STT (default: `whisper`) con:
+  - modello configurabile (`--model` o `GYTE_WHISPER_MODEL`)
+  - lingua opzionale (`--lang/--language` o `GYTE_WHISPER_LANG`)
+  - output in una directory scelta (`--outdir` o `GYTE_OUTDIR`)
+- genera nella directory di output:
+  - `<basename>.txt` – testo puro
+  - `<basename>.srt` – sottotitoli SRT
+
+Opzioni principali:
+
+- `--model MODEL`  
+  Modello Whisper da usare (`tiny`, `base`, `small`, `medium`, `large`).  
+  Default: valore di `GYTE_WHISPER_MODEL` o `"small"`.
+
+- `--lang LANG` / `--language LANG`  
+  Lingua di lavoro (es. `en`, `it`, `fr`).  
+  Default: valore di `GYTE_WHISPER_LANG` o `"auto"` (auto-detect lato Whisper).
+
+- `--outdir DIR`  
+  Directory di output.  
+  Default: `GYTE_OUTDIR` o directory corrente.
+
+Env utili:
+
+- `GYTE_WHISPER_MODEL` – modello di default per `gyte-whisper-local`
+- `GYTE_WHISPER_LANG` – lingua di default (o `auto`)
+- `GYTE_OUTDIR` – directory di output di default
+- `GYTE_STT_BIN` – comando STT da usare (default: `whisper`)
+
+Esempi:
+
+```bash
+# Modello small, lingua auto, output nella cwd
+gyte-whisper-local "Git-GitHub-CrashCourse.mp4"
+
+# Forza lingua inglese e mette tutto in ./transcripts
+GYTE_OUTDIR="transcripts" gyte-whisper-local --lang en "Git-GitHub-CrashCourse.mp4"
+
+# Usa un binario STT alternativo (es. wrapper personale)
+GYTE_STT_BIN="my-whisper-wrapper" gyte-whisper-local lesson1.mkv
+```
+
+Dopo la generazione puoi combinare con gli altri strumenti GYTE, ad esempio:
+
+```bash
+gyte-reflow-text "Git-GitHub-CrashCourse.txt"   > "Git-GitHub-CrashCourse.en.sentences.txt"
+
+gyte-translate --from en --to it   "Git-GitHub-CrashCourse.en.sentences.txt"
+```
+
+---
+
 ## Modulo AI esterno – `gyte-translate`
 
 `gyte-translate` non contiene nessuna logica di AI “interna`: si limita a prendere un file di testo e a passarlo a un comando esterno che legge da `stdin` e scrive il risultato su `stdout`.
@@ -487,11 +555,9 @@ Questo permette di usare:
 ---
 
 ## Integrazione AI (opzionale)
+Alcune funzioni (es. `gyte-ai-openai` + `gyte-translate`) richiedono il client Python `openai`.
 
-Alcune funzioni (es. `gyte-openai` + `gyte-translate`) richiedono il client Python `openai`.
-
-Installazione opzionale (consigliato in un virtualenv):
-
+Installazione opzionale:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
@@ -499,27 +565,18 @@ pip install -r requirements-optional.txt
 ```
 
 Poi esporta:
-
 ```bash
 export OPENAI_API_KEY='sk-...'
-export GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini'
+export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
 ```
-
-Puoi anche impostare il modello di default via:
-
-```bash
-export GYTE_AI_MODEL='gpt-4.1-mini'
-```
-
-In questo caso l’opzione `--model` sulla CLI di `gyte-openai` ha priorità su `GYTE_AI_MODEL`.
 
 ---
 
-### Esempio: usare `gyte-translate` con OpenAI (`gyte-openai`)
+### Esempio: usare `gyte-translate` con OpenAI (`gyte-ai-openai`)
 
 Il repository include un wrapper di riferimento per OpenAI:
 
-- script: `scripts/gyte-openai`
+- script: `scripts/gyte-ai-openai`
 - uso: come valore di `GYTE_AI_CMD`
 
 > ⚠️ **Sicurezza API key**
@@ -537,8 +594,7 @@ export OPENAI_API_KEY="sk-..."   # NON committare mai questa riga
 Poi puoi configurare GYTE così:
 
 ```bash
-export GYTE_AI_MODEL='gpt-4.1-mini'
-export GYTE_AI_CMD='gyte-openai'
+export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
 
 # esempio: traduci da italiano a inglese
 gyte-translate --from it --to en sample.it.txt
@@ -552,7 +608,7 @@ Puoi verificare la configurazione senza chiamare l’API con `--dry-run`:
 ```bash
 echo "Ciao mondo, questo è un test." > sample.it.txt
 
-SRC_LANG=it TARGET_LANG=en gyte-openai --model gpt-4.1-mini --dry-run < sample.it.txt
+SRC_LANG=it TARGET_LANG=en   gyte-ai-openai --model gpt-4.1-mini --dry-run < sample.it.txt
 ```
 
 Il wrapper:
@@ -581,7 +637,7 @@ La cartella `examples` contiene esempi pratici di utilizzo di GYTE:
   Lo stesso testo, dopo il passaggio con `gyte-reflow-text` (una frase per riga).
 
 - `ai-openai-translate.sh`  
-  Esempio di utilizzo combinato di `gyte-translate` + `gyte-openai` (senza mai salvare l’API key in chiaro negli script).
+  Esempio di utilizzo combinato di `gyte-translate` + `gyte-ai-openai` (senza mai salvare l’API key in chiaro negli script).
 
 Questi file sono solo dimostrativi: sostituisci le URL e i nomi file con quelli che ti servono nel tuo contesto reale.
 
@@ -621,54 +677,43 @@ Nota: l’ordine delle lingue in `YT_TRANSCRIPT_LANGS` è significativo: viene u
 ---
 
 # 🔐 Sicurezza & Privacy
-
 GYTE è progettato secondo i principi DevSecOps minimalisti, con l’obiettivo di evitare rischi comuni nella supply-chain, nell’uso di wrapper AI e negli script shell. Non raccoglie né invia alcun dato proprio: tutto avviene localmente, tramite strumenti standard.
 
 ## ✦ Come GYTE protegge l’utente
 
-#### Nessuna chiave nel codice o negli script
-
-Tutti i segreti (es. `OPENAI_API_KEY`) devono essere forniti solo tramite variabili d’ambiente.  
+#### Nessuna chiave nel codice o negli script.
+Tutti i segreti (es. OPENAI_API_KEY) devono essere forniti solo tramite variabili d’ambiente.
 GYTE non stampa mai il valore di tali variabili.
 
-#### Wrapper yt-dlp “blindati”
-
+#### Wrapper yt-dlp “blindati”.
 Gli script rifiutano opzioni pericolose come:
-
-- `--exec*`
-- `--postprocessor-args`
-- `--run-postprocessor`
+`--exec*`, `--postprocessor-args`, `--run-postprocessor`
 
 impedendo l’esecuzione accidentale di comandi arbitrari.
 
-#### Validazione input rigorosa
-
-Gli URL devono iniziare con `http://` o `https://`  
+#### Validazione input rigorosa.
+Le URL devono iniziare con `http(s)://`
 (così non possono trasformarsi in opzioni nascoste tipo `-someflag`).
 
-#### Nessuna dipendenza remota eseguita automaticamente
-
+#### Nessuna dipendenza remota eseguita automaticamente.
 Non esistono sequenze `curl | sh`, script bootstrap legacy o download silenziosi.
 
-#### Limitazione volontaria degli input AI
-
+#### Limitazione volontaria degli input AI.
 Gli script di traduzione supportano:
 
-- `GYTE_AI_MAX_INPUT_BYTES` (o variabili analoghe)
+- `GYTE_AI_MAX_INPUT_BYTES` / `GYTE_AI_MAX_INPUT_CHARS`
 
 per evitare di inviare per errore file enormi ai provider AI.
 
-#### File generati esclusi dal repository
-
+#### File generati esclusi dal repository.
 Il `.gitignore` protegge il repo da:
-
-- media scaricati (`.mp4`, `.mp3`, `.mkv`, …),
-- sottotitoli, log, file temporanei,
-- virtualenv e file `.env` con segreti.
+  - media scaricati (mp4/mp3/mkv…),
+  - sottotitoli, log, tmp,
+  - virtualenv e file `.env` con segreti.
 
 ## ✦ Cosa non fa GYTE (per scelta)
 
-- Non gestisce chiavi API: le usa solo se già impostate nell’ambiente dell’utente.
+- Non gestisce chiavi API. Le usa solo se già impostate nell’ambiente dell’utente.
 - Non esegue comandi arbitrari forniti all’interno di URL, alias o variabili.
 - Non modifica il sistema dell’utente (no installazioni, no permessi elevati).
 
