@@ -52,3 +52,17 @@
    - [x] integrazione opzionale con servizio AI esterno per tradurre i transcript (.txt / .md)
    - [x] CLI helper dedicato (es. `gyte-translate`) che prende in input file + lingua target
    - [x] documentazione nel README su configurazione chiavi/API e limiti d’uso
+
+10. **Trascrizione locale da file (whisper.cpp)**
+   - [x] script `gyte-whisper-local` che:
+     - [x] accetta in input un file locale (es. `.mp4`, `.mp3`, `.wav`, …)
+     - [x] invoca un binario `whisper.cpp` già installato sul sistema
+     - [x] genera trascrizioni testuali (`.txt`) e sottotitoli (`.srt`) nella directory di output
+   - [x] sezione dedicata nel README:
+     - **8. Trascrizione locale MP4 — `gyte-whisper-local`**
+   - [ ] esempi pratici:
+     - [ ] script in `examples/` che mostra un flusso completo:
+       `gyte-video` → `gyte-whisper-local` → `gyte-reflow-text` → `gyte-translate`
+   - [ ] estensioni future:
+     - [ ] supporto a più profili di modello (es. `tiny`, `base`, `small`) via env `GYTE_WHISPER_MODEL`
+     - [ ] gestione opzionale di più lingue di output
