@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Uso:
+#   gyte-whisper-local [--model MODEL] [--lang LANG] [--outdir DIR] FILE
+#
+# Esempi:
+#   gyte-whisper-local lesson1.mp4
+#   gyte-whisper-local --model small --lang en /path/to/video.mp4
+#   gyte-whisper-local --outdir transcripts lesson1.mp4
+#
+# Env:
+#   GYTE_WHISPER_MODEL   modello Whisper di default (es. tiny, base, small, medium, large)
+#                        default: "small"
+#   GYTE_WHISPER_LANG    lingua di default (es. en, it, fr)
+#                        default: "auto" -> lascia rilevamento automatico a whisper
+#   GYTE_OUTDIR          directory di output di default (se non passi --outdir)
+#   GYTE_STT_BIN         binario/command per lo STT (default: "whisper")
+#
+# Output:
+#   Nella directory di output (default: cwd o GYTE_OUTDIR) vengono creati file tipo:
+#     <basename>.txt   - testo puro
+#     <basename>.srt   - sottotitoli SRT
+#   (usiamo --output_format txt,srt)
+
+usage() {
+  cat >&2 << 'EOF'
+Uso:
+  gyte-whisper-local [--model MODEL] [--lang LANG] [--outdir DIR] FILE
+
+Esempi:
+  gyte-whisper-local lesson1.mp4
+  gyte-whisper-local --model small --lang en /path/to/video.mp4
+  gyte-whisper-local --outdir transcripts lesson1.mp4
+
+Env:
+  GYTE_WHISPER_MODEL   modello Whisper (tiny, base, small, medium, large). Default: small
+  GYTE_WHISPER_LANG    lingua (en, it, ...). Default: auto (lascia auto-detect a whisper)
+  GYTE_OUTDIR          directory di output di default
+  GYTE_STT_BIN         comando/binario STT (default: whisper)
+EOF
+}
+
+MODEL="${GYTE_WHISPER_MODEL:-small}"
+LANG="${GYTE_WHISPER_LANG:-auto}"
+OUTDIR="${GYTE_OUTDIR:-.}"
+STT_BIN="${GYTE_STT_BIN:-whisper}"
+
+# Parsing opzioni
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --model)
+      if [ $# -lt 2 ]; then
+        echo "Errore: --model richiede un argomento" >&2
+        exit 2
+      fi
+      MODEL="$2"
+      shift 2
+      ;;
+    --model=*)
+      MODEL="${1#--model=}"
+      shift
+      ;;
+    --lang|--language)
+      if [ $# -lt 2 ]; then
+        echo "Errore: --lang/--language richiede un argomento" >&2
+        exit 2
+      fi
+      LANG="$2"
+      shift 2
+      ;;
+    --lang=*|--language=*)
+      LANG="${1#*=}"
+      shift
+      ;;
+    --outdir)
+      if [ $# -lt 2 ]; then
+        echo "Errore: --outdir richiede un argomento" >&2
+        exit 2
+      fi
+      OUTDIR="$2"
+      shift 2
+      ;;
+    --outdir=*)
+      OUTDIR="${1#--outdir=}"
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "Errore: opzione non riconosciuta: $1" >&2
+      usage
+      exit 2
+      ;;
+    *)
+      # primo non-opzione -> FILE
+      break
+      ;;
+  esac
+done
+
+if [ $# -lt 1 ]; then
+  echo "Errore: manca il FILE di input." >&2
+  usage
+  exit 1
+fi
+
+INPUT="$1"
+
+if [ -z "$INPUT" ]; then
+  echo "Errore: FILE di input vuoto." >&2
+  exit 1
+fi
+
+if [[ "$INPUT" == -* ]]; then
+  echo "Errore: il percorso del FILE non può iniziare con '-'." >&2
+  exit 1
+fi
+
+if [ ! -f "$INPUT" ]; then
+  echo "Errore: file non trovato: $INPUT" >&2
+  exit 1
+fi
+
+# Verifica STT binario
+if ! command -v "$STT_BIN" >/dev/null 2>&1; then
+  echo "Errore: comando STT '$STT_BIN' non trovato nel PATH." >&2
+  echo "       Installa ad es. openai-whisper:" >&2
+  echo "         python3 -m venv ~/venv/whisper" >&2
+  echo "         source ~/venv/whisper/bin/activate" >&2
+  echo "         pip install -U openai-whisper" >&2
+  echo "       e assicurati che 'whisper' sia nel PATH (o imposta GYTE_STT_BIN)." >&2
+  exit 1
+fi
+
+# Prepara directory di output
+if [ ! -d "$OUTDIR" ]; then
+  mkdir -p "$OUTDIR"
+fi
+
+echo ">> gyte-whisper-local"
+echo "   Input   : $INPUT"
+echo "   Model   : $MODEL"
+echo "   Lang    : $LANG"
+echo "   Outdir  : $OUTDIR"
+echo "   STT bin : $STT_BIN"
+
+# Costruisce gli argomenti per whisper
+whisper_args=("$INPUT" --model "$MODEL" --output_dir "$OUTDIR" --output_format "txt,srt")
+
+# Se LANG != auto, lo passiamo esplicitamente a whisper
+if [ -n "$LANG" ] && [ "$LANG" != "auto" ]; then
+  whisper_args+=( --language "$LANG" )
+fi
+
+# Esegui STT
+"$STT_BIN" "${whisper_args[@]}"
+
+echo
+echo ">> Transcription completata."
+echo "   Controlla i file .txt e .srt in: $OUTDIR"
+echo "   Puoi ora usare ad esempio:"
+echo "     gyte-reflow-text <file.txt> > <file.sentences.txt"
+echo "   e, se vuoi, gyte-translate per la traduzione AI."
