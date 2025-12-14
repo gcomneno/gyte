@@ -4,34 +4,36 @@ set -euo pipefail
 usage() {
   cat >&2 <<'EOF_USAGE'
 Uso:
-  gyte-reflow-text [--paragraphs] [--sentences] [--max-width N] [--stats] [inputfile]
+  gyte-reflow-text [opzioni] [inputfile]
 
-Se inputfile è omesso o uguale a "-", il testo viene letto da stdin.
+Se inputfile e' omesso o uguale a "-", il testo viene letto da stdin.
 
 Modalita':
-  --paragraphs   Solo unione/compattazione righe in paragrafi (default: ON se non specifichi modalita')
-  --sentences    Solo split in frasi (default: ON se non specifichi modalita')
+  --paragraphs       Solo unione/compattazione righe in paragrafi
+  --sentences        Solo split in frasi
+
+Preset:
+  --ai-friendly      Preset per pipeline AI:
+                     - equivale a: --paragraphs + --sentences
+                     - normalizza spazi (no doppi, no spazi prima di . , ? ! : ;)
+                     - se --max-width non e' specificato, default soft a 120
+
+Sanitizzazione:
+  --strict-utf8      Valida/sanifica input come UTF-8:
+                     - se trova byte invalidi, li rimuove (iconv -c) o li sostituisce (fallback Python)
+                     - warning su stderr se ha ripulito qualcosa
+                     - stdout sempre UTF-8 valido
 
 Opzioni:
-  --max-width N  Wrap "dolce" a N caratteri (non rompe parole; se una parola supera N, resta intera)
-  --stats        Stampa statistiche su stderr (stdout resta solo testo)
-  -h, --help     Mostra questo help
+  --max-width N      Wrap "dolce" a N caratteri (non rompe parole; se una parola supera N, resta intera)
+  --stats            Statistiche su stderr (stdout resta solo testo)
+  -h, --help         Mostra questo help
 
 Esempi:
-  # default: paragraphs + sentences
-  gyte-reflow-text input.txt > out.sentences.txt
-
-  # solo compattazione (nessun split in frasi)
-  gyte-reflow-text --paragraphs input.txt > out.paragraphs.txt
-
-  # solo split in frasi (input gia' compattato)
-  gyte-reflow-text --sentences input.txt > out.sentences.txt
-
-  # output piu' "diff/terminal friendly"
-  gyte-reflow-text --max-width 100 input.txt > out.wrap.txt
-
-  # stats (non sporca lo stdout)
-  gyte-reflow-text --stats input.txt > /dev/null
+  gyte-reflow-text input.txt > out.txt
+  gyte-reflow-text --ai-friendly input.txt > out.ai.txt
+  gyte-reflow-text --ai-friendly --max-width 140 input.txt > out.ai140.txt
+  gyte-reflow-text --strict-utf8 input.txt > out.clean.txt
 EOF_USAGE
 }
 
@@ -50,6 +52,8 @@ trap cleanup EXIT
 # --------------------------
 MODE_PAR=0
 MODE_SENT=0
+AI_FRIENDLY=0
+STRICT_UTF8=0
 MAX_WIDTH=""
 STATS=0
 INPUT_ARG=""
@@ -59,6 +63,8 @@ while [ "$#" -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     --paragraphs) MODE_PAR=1; shift ;;
     --sentences) MODE_SENT=1; shift ;;
+    --ai-friendly) AI_FRIENDLY=1; shift ;;
+    --strict-utf8) STRICT_UTF8=1; shift ;;
     --max-width)
       [ "$#" -ge 2 ] || { err "--max-width richiede un valore N"; usage; exit 1; }
       MAX_WIDTH="$2"
@@ -94,6 +100,16 @@ if [ "$#" -gt 0 ]; then
   fi
 fi
 
+# Preset AI-friendly: forza paragraphs + sentences.
+if [ "$AI_FRIENDLY" -eq 1 ]; then
+  MODE_PAR=1
+  MODE_SENT=1
+  # Default soft max-width solo se non specificato
+  if [ -z "$MAX_WIDTH" ]; then
+    MAX_WIDTH="120"
+  fi
+fi
+
 # Default compat: se non specifichi modalita', fai entrambe.
 if [ "$MODE_PAR" -eq 0 ] && [ "$MODE_SENT" -eq 0 ]; then
   MODE_PAR=1
@@ -116,7 +132,9 @@ if [ -n "$INPUT_ARG" ] && [ "$INPUT_ARG" != "-" ]; then
 fi
 
 IN_FILE="$INPUT"
-if [ "$STATS" -eq 1 ] && [ "$INPUT" = "/dev/stdin" ]; then
+
+# Se input e' stdin e serve strict-utf8 o stats, bufferizziamo per poter validare / rileggere.
+if { [ "$STATS" -eq 1 ] || [ "$STRICT_UTF8" -eq 1 ]; } && [ "$INPUT" = "/dev/stdin" ]; then
   tmp_in="$(mktemp -t gyte-reflow-in.XXXXXX)"
   tmpfiles+=("$tmp_in")
   cat > "$tmp_in"
@@ -124,7 +142,67 @@ if [ "$STATS" -eq 1 ] && [ "$INPUT" = "/dev/stdin" ]; then
 fi
 
 # --------------------------
-# Helper: build AWK programs as temp files (zero escaping rognoso)
+# UTF-8 strict sanitization (opt-in)
+# --------------------------
+sanitize_utf8_if_needed() {
+  local f="$1"
+  if [ "$STRICT_UTF8" -ne 1 ]; then
+    echo "$f"
+    return 0
+  fi
+
+  # Preferisci iconv (leggero e presente quasi ovunque)
+  if command -v iconv >/dev/null 2>&1; then
+    # Validazione: se fallisce, ripulisci con -c e warning.
+    if iconv -f UTF-8 -t UTF-8 "$f" >/dev/null 2>&1; then
+      echo "$f"
+      return 0
+    fi
+    echo "[gyte-reflow-text] warning: input non UTF-8 valido; ripulisco con iconv -c (byte invalidi rimossi)" >&2
+    local cleaned
+    cleaned="$(mktemp -t gyte-reflow-utf8.XXXXXX)"
+    tmpfiles+=("$cleaned")
+    iconv -f UTF-8 -t UTF-8 -c "$f" > "$cleaned" || true
+    echo "$cleaned"
+    return 0
+  fi
+
+  # Fallback: python3 (sostituisce byte invalidi con '?')
+  if command -v python3 >/dev/null 2>&1; then
+    echo "[gyte-reflow-text] warning: iconv non trovato; sanitizzo UTF-8 via python3 (invalid -> '?')" >&2
+    local cleaned
+    cleaned="$(mktemp -t gyte-reflow-utf8.XXXXXX)"
+    tmpfiles+=("$cleaned")
+    python3 - "$f" "$cleaned" <<'PY'
+import sys
+
+src = sys.argv[1]
+dst = sys.argv[2]
+
+data = open(src, "rb").read()
+try:
+  text = data.decode("utf-8", errors="strict")
+  # gia' valido
+  open(dst, "wb").write(data)
+except UnicodeDecodeError:
+  text = data.decode("utf-8", errors="replace")
+  # 'replace' usa U+FFFD; qui lo rimpiazziamo con '?', come richiesto "o similar"
+  text = text.replace("\ufffd", "?")
+  open(dst, "wb").write(text.encode("utf-8", errors="strict"))
+PY
+    echo "$cleaned"
+    return 0
+  fi
+
+  # Ultimo fallback: niente tool -> rifiuta (meglio esplicito)
+  err "--strict-utf8 richiede 'iconv' o 'python3' nel PATH"
+  exit 1
+}
+
+IN_FILE="$(sanitize_utf8_if_needed "$IN_FILE")"
+
+# --------------------------
+# Helper: build AWK programs as temp files
 # --------------------------
 make_awk_file() {
   local name="$1"
@@ -172,12 +250,9 @@ function tolow(s){ return tolower(s) }
 function is_abbrev_end(s, t) {
   t = tolow(strip_closers(s))
 
-  # abbreviazioni IT/EN base
   if (t ~ /(^|[[:space:]])(prof|dott|dr|ing|avv|sig|sig\.ra|sig\.na|ecc|es|mr|mrs|ms|jr|sr|etc|vs|no|nr|n)\.$/) return 1
   if (t ~ /(^|[[:space:]])(e\.g|i\.e)\.$/) return 1
   if (t ~ /(^|[[:space:]])(s\.p\.a|s\.r\.l|s\.n\.c)\.$/) return 1
-
-  # acronimi tipo U.S. / U.K. (2+ blocchi lettera+.)
   if (t ~ /(^|[[:space:]])([a-z]\.){2,}$/) return 1
 
   return 0
@@ -226,12 +301,10 @@ function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); retu
 function emit(s){ s=trim(s); if (s!="") print s }
 
 function protect_numeric_dots(s, placeholder, dotpos, p) {
-  # proteggi \d.\d (decimali, IP-like ecc.)
   while (match(s, /[0-9]\.[0-9]/)) {
     dotpos = RSTART + 1
     s = substr(s, 1, dotpos-1) placeholder substr(s, dotpos+1)
   }
-  # proteggi pattern tipo v1.2 / r2.0 / x10.5 (lettera + cifre . cifra)
   while (match(s, /[A-Za-z][0-9]*\.[0-9]/)) {
     p = substr(s, RSTART, RLENGTH)
     dotpos = index(p, ".")
@@ -258,62 +331,33 @@ function protect_token_dots(s, token, placeholder, pos, pre, mid, post) {
 
 function protect_abbrevs(s, placeholder, i) {
   n = 0
-  toks[++n] = "Prof."
-  toks[++n] = "prof."
-  toks[++n] = "Dott."
-  toks[++n] = "dott."
-  toks[++n] = "Dr."
-  toks[++n] = "dr."
-  toks[++n] = "Ing."
-  toks[++n] = "ing."
-  toks[++n] = "Avv."
-  toks[++n] = "avv."
-  toks[++n] = "Sig."
-  toks[++n] = "sig."
-  toks[++n] = "Sig.ra"
-  toks[++n] = "sig.ra"
-  toks[++n] = "Sig.na"
-  toks[++n] = "sig.na"
-  toks[++n] = "ecc."
-  toks[++n] = "Ecc."
-  toks[++n] = "es."
-  toks[++n] = "Es."
-  toks[++n] = "Mr."
-  toks[++n] = "mr."
-  toks[++n] = "Mrs."
-  toks[++n] = "mrs."
-  toks[++n] = "Ms."
-  toks[++n] = "ms."
-  toks[++n] = "Jr."
-  toks[++n] = "jr."
-  toks[++n] = "Sr."
-  toks[++n] = "sr."
-  toks[++n] = "etc."
-  toks[++n] = "Etc."
-  toks[++n] = "vs."
-  toks[++n] = "Vs."
-  toks[++n] = "No."
-  toks[++n] = "no."
-  toks[++n] = "Nr."
-  toks[++n] = "nr."
+  toks[++n] = "Prof."; toks[++n] = "prof."
+  toks[++n] = "Dott."; toks[++n] = "dott."
+  toks[++n] = "Dr."; toks[++n] = "dr."
+  toks[++n] = "Ing."; toks[++n] = "ing."
+  toks[++n] = "Avv."; toks[++n] = "avv."
+  toks[++n] = "Sig."; toks[++n] = "sig."
+  toks[++n] = "Sig.ra"; toks[++n] = "sig.ra"
+  toks[++n] = "Sig.na"; toks[++n] = "sig.na"
+  toks[++n] = "ecc."; toks[++n] = "Ecc."
+  toks[++n] = "es."; toks[++n] = "Es."
+  toks[++n] = "Mr."; toks[++n] = "mr."
+  toks[++n] = "Mrs."; toks[++n] = "mrs."
+  toks[++n] = "Ms."; toks[++n] = "ms."
+  toks[++n] = "Jr."; toks[++n] = "jr."
+  toks[++n] = "Sr."; toks[++n] = "sr."
+  toks[++n] = "etc."; toks[++n] = "Etc."
+  toks[++n] = "vs."; toks[++n] = "Vs."
+  toks[++n] = "No."; toks[++n] = "no."
+  toks[++n] = "Nr."; toks[++n] = "nr."
   toks[++n] = "n."
-
-  toks[++n] = "e.g."
-  toks[++n] = "i.e."
-  toks[++n] = "E.g."
-  toks[++n] = "I.e."
-
-  toks[++n] = "S.p.A."
-  toks[++n] = "s.p.a."
-  toks[++n] = "S.r.l."
-  toks[++n] = "s.r.l."
-  toks[++n] = "S.n.c."
-  toks[++n] = "s.n.c."
-
-  toks[++n] = "U.S."
-  toks[++n] = "u.s."
-  toks[++n] = "U.K."
-  toks[++n] = "u.k."
+  toks[++n] = "e.g."; toks[++n] = "i.e."
+  toks[++n] = "E.g."; toks[++n] = "I.e."
+  toks[++n] = "S.p.A."; toks[++n] = "s.p.a."
+  toks[++n] = "S.r.l."; toks[++n] = "s.r.l."
+  toks[++n] = "S.n.c."; toks[++n] = "s.n.c."
+  toks[++n] = "U.S."; toks[++n] = "u.s."
+  toks[++n] = "U.K."; toks[++n] = "u.k."
 
   for (i=1; i<=n; i++) {
     s = protect_token_dots(s, toks[i], placeholder)
@@ -337,7 +381,6 @@ BEGIN { placeholder="__GYTEDOT__" }
   line = protect_numeric_dots(line, placeholder)
   line = protect_abbrevs(line, placeholder)
 
-  # split: . ! ? + eventuali closers ASCII + spazio
   while (match(line, /[.!?]["'\)\]\}]*[[:space:]]+/)) {
     endpos = RSTART + RLENGTH - 1
     chunk = substr(line, 1, endpos)
@@ -346,7 +389,6 @@ BEGIN { placeholder="__GYTEDOT__" }
     tmp = trim(chunk)
     while (tmp ~ /["'\)\]\}]+$/) sub(/["'\)\]\}]+$/, "", tmp)
 
-    # evita split su enumerazioni tipo "1." o "A."
     if (tmp ~ /^[0-9]{1,3}\.$/ || tmp ~ /^[A-Za-z]\.$/) {
       sub(/[[:space:]]+$/, " ", chunk)
       rest = substr(line, endpos + 1)
@@ -399,6 +441,16 @@ wrap_max_width() {
   '
 }
 
+ai_friendly_normalize_spaces() {
+  # - collassa whitespace
+  # - rimuove spazi prima di . , ? ! : ;
+  # - trim ai bordi
+  sed -E \
+    -e 's/[[:space:]]+/ /g' \
+    -e 's/ ([\.\,\?\!\:\;])/\1/g' \
+    -e 's/^[[:space:]]+//; s/[[:space:]]+$//'
+}
+
 run_pipeline_to_file_or_stream() {
   local out_file="${1:-}"
   local do_wrap=0
@@ -415,6 +467,13 @@ run_pipeline_to_file_or_stream() {
       preprocess | sentences > "$out_file"
     fi
 
+    if [ "$AI_FRIENDLY" -eq 1 ]; then
+      tmp_norm="$(mktemp -t gyte-reflow-norm.XXXXXX)"
+      tmpfiles+=("$tmp_norm")
+      ai_friendly_normalize_spaces < "$out_file" > "$tmp_norm"
+      mv -- "$tmp_norm" "$out_file"
+    fi
+
     if [ "$do_wrap" -eq 1 ]; then
       tmp_wrapped="$(mktemp -t gyte-reflow-wrap.XXXXXX)"
       tmpfiles+=("$tmp_wrapped")
@@ -423,22 +482,46 @@ run_pipeline_to_file_or_stream() {
     fi
   else
     if [ "$MODE_PAR" -eq 1 ] && [ "$MODE_SENT" -eq 1 ]; then
-      if [ "$do_wrap" -eq 1 ]; then
-        preprocess | paragraphs | sentences | wrap_max_width "$MAX_WIDTH"
+      if [ "$AI_FRIENDLY" -eq 1 ]; then
+        if [ "$do_wrap" -eq 1 ]; then
+          preprocess | paragraphs | sentences | ai_friendly_normalize_spaces | wrap_max_width "$MAX_WIDTH"
+        else
+          preprocess | paragraphs | sentences | ai_friendly_normalize_spaces
+        fi
       else
-        preprocess | paragraphs | sentences
+        if [ "$do_wrap" -eq 1 ]; then
+          preprocess | paragraphs | sentences | wrap_max_width "$MAX_WIDTH"
+        else
+          preprocess | paragraphs | sentences
+        fi
       fi
     elif [ "$MODE_PAR" -eq 1 ]; then
-      if [ "$do_wrap" -eq 1 ]; then
-        preprocess | paragraphs | wrap_max_width "$MAX_WIDTH"
+      if [ "$AI_FRIENDLY" -eq 1 ]; then
+        if [ "$do_wrap" -eq 1 ]; then
+          preprocess | paragraphs | ai_friendly_normalize_spaces | wrap_max_width "$MAX_WIDTH"
+        else
+          preprocess | paragraphs | ai_friendly_normalize_spaces
+        fi
       else
-        preprocess | paragraphs
+        if [ "$do_wrap" -eq 1 ]; then
+          preprocess | paragraphs | wrap_max_width "$MAX_WIDTH"
+        else
+          preprocess | paragraphs
+        fi
       fi
     else
-      if [ "$do_wrap" -eq 1 ]; then
-        preprocess | sentences | wrap_max_width "$MAX_WIDTH"
+      if [ "$AI_FRIENDLY" -eq 1 ]; then
+        if [ "$do_wrap" -eq 1 ]; then
+          preprocess | sentences | ai_friendly_normalize_spaces | wrap_max_width "$MAX_WIDTH"
+        else
+          preprocess | sentences | ai_friendly_normalize_spaces
+        fi
       else
-        preprocess | sentences
+        if [ "$do_wrap" -eq 1 ]; then
+          preprocess | sentences | wrap_max_width "$MAX_WIDTH"
+        else
+          preprocess | sentences
+        fi
       fi
     fi
   fi

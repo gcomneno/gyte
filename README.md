@@ -435,6 +435,25 @@ Nota: lo splitter è “smarter” e prova a NON spezzare su abbreviazioni IT/EN
 
 Demo rapida: `examples/reflow-splitter-demo.sh` (con sample in `examples/reflow-splitter-sample.txt`).
 
+#### Preset AI-friendly
+
+```bash
+# Transcript -> reflow "AI-friendly" -> translate (comando AI esterno)
+gyte-transcript URL --outdir out/
+gyte-reflow-text --ai-friendly out/video.it.txt > out/video.it.ai.txt
+GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini' gyte-translate --to en out/video.it.ai.txt
+```
+
+Sanitizzazione UTF-8 (opt-in)
+
+# Esempio file "sporco" (byte non UTF-8)
+```bash
+printf 'ok\xffbad\n' > /tmp/dirty.txt
+
+# Ripulisce e garantisce stdout UTF-8 valido
+gyte-reflow-text --strict-utf8 /tmp/dirty.txt > /tmp/dirty.clean.txt
+```
+
 ---
 
 ### 7. Traduzione AI dei transcript — `gyte-translate`
