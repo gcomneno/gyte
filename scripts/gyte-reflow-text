@@ -2,78 +2,345 @@
 set -euo pipefail
 
 # Uso:
-#   gyte-reflow-text input.txt  > output.txt
-#   cat input.txt | gyte-reflow-text > output.txt
+#   gyte-reflow-text [opzioni] [inputfile]  > output.txt
+#   cat input.txt | gyte-reflow-text [opzioni] > output.txt
 #
-# Se non specifichi il file o passi "-", legge da stdin.
+# Se inputfile è omesso o uguale a "-", legge da stdin.
 
 usage() {
-  cat >&2 << 'EOF'
+  cat >&2 <<'EOF_USAGE'
 Uso:
-  gyte-reflow-text [inputfile]
+  gyte-reflow-text [--paragraphs] [--sentences] [--max-width N] [--stats] [inputfile]
 
 Se inputfile è omesso o uguale a "-", il testo viene letto da stdin.
 
+Modalità:
+  --paragraphs   Solo unione/compattazione righe in paragrafi (default: ON se non specifichi modalità)
+  --sentences    Solo split in frasi (default: ON se non specifichi modalità)
+
+Opzioni:
+  --max-width N  Wrap “dolce” a N caratteri (non rompe parole; se una parola supera N, resta intera)
+  --stats        Stampa statistiche su stderr (stdout resta solo testo)
+  -h, --help     Mostra questo help
+
 Esempi:
-  gyte-reflow-text input.txt > output.txt
-  cat input.txt | gyte-reflow-text > output.txt
-EOF
+  # default: paragraphs + sentences
+  gyte-reflow-text input.txt > out.sentences.txt
+
+  # solo compattazione (nessun split in frasi)
+  gyte-reflow-text --paragraphs input.txt > out.paragraphs.txt
+
+  # solo split in frasi (input già compattato)
+  gyte-reflow-text --sentences input.txt > out.sentences.txt
+
+  # output più “diff/terminal friendly”
+  gyte-reflow-text --max-width 100 input.txt > out.wrap.txt
+
+  # stats (non sporca lo stdout)
+  gyte-reflow-text --stats input.txt > out.txt
+EOF_USAGE
 }
 
-# Gestione argomenti:
-# - 0 argomenti      -> usa stdin
-# - 1 argomento      -> file di input o "-"
-# - -h / --help      -> mostra usage
-# - qualsiasi altro  -> errore esplicito
-if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
-  usage
-  exit 0
-elif [ "$#" -gt 1 ]; then
-  echo "Errore: questo comando accetta al massimo un argomento (inputfile)." >&2
-  usage
-  exit 1
-fi
+err() { echo "Errore: $*" >&2; }
 
-if [ "$#" -eq 0 ] || [ "${1:-}" = "-" ]; then
-  INPUT="/dev/stdin"
-else
-  INPUT="$1"
-  if [ ! -f "$INPUT" ]; then
-    echo "Errore: file '$INPUT' non trovato." >&2
+tmpfiles=()
+cleanup() {
+  for f in "${tmpfiles[@]:-}"; do
+    rm -f -- "$f" 2>/dev/null || true
+  done
+}
+trap cleanup EXIT
+
+# --------------------------
+# Parse args
+# --------------------------
+MODE_PAR=0
+MODE_SENT=0
+MAX_WIDTH=""
+STATS=0
+INPUT_ARG=""
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --paragraphs)
+      MODE_PAR=1
+      shift
+      ;;
+    --sentences)
+      MODE_SENT=1
+      shift
+      ;;
+    --max-width)
+      if [ "$#" -lt 2 ]; then
+        err "--max-width richiede un valore N"
+        usage
+        exit 1
+      fi
+      MAX_WIDTH="$2"
+      shift 2
+      ;;
+    --stats)
+      STATS=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      err "opzione sconosciuta: $1"
+      usage
+      exit 1
+      ;;
+    *)
+      # primo non-opzione = inputfile; altri = errore
+      if [ -z "$INPUT_ARG" ]; then
+        INPUT_ARG="$1"
+        shift
+      else
+        err "questo comando accetta al massimo un inputfile (trovati: '$INPUT_ARG' e '$1')"
+        usage
+        exit 1
+      fi
+      ;;
+  esac
+done
+
+# eventuali argomenti dopo "--"
+if [ "$#" -gt 0 ]; then
+  if [ -z "$INPUT_ARG" ] && [ "$#" -eq 1 ]; then
+    INPUT_ARG="$1"
+  else
+    err "troppi argomenti"
+    usage
     exit 1
   fi
 fi
 
-# Normalizzazione CRLF, decodifica HTML di base, merge righe, normalizzazione spazi
-tr -d '\r' < "$INPUT" \
-  | sed 's/^"//; s/"$//' \
-  | sed -E \
-      -e 's/&nbsp;+/ /g' \
-      -e 's/&amp;/\&/g' \
-      -e 's/&lt;/</g' \
-      -e 's/&gt;/>/g' \
-      -e 's/&quot;/"/g' \
-      -e 's/&#39;/'"'"'/g' \
-  | awk '
-    BEGIN { par = "" }
+# Default: se non specifichi modalità, fai entrambe (compat con comportamento attuale)
+if [ "$MODE_PAR" -eq 0 ] && [ "$MODE_SENT" -eq 0 ]; then
+  MODE_PAR=1
+  MODE_SENT=1
+fi
+
+# valida max-width
+if [ -n "$MAX_WIDTH" ]; then
+  if ! [[ "$MAX_WIDTH" =~ ^[0-9]+$ ]]; then
+    err "--max-width deve essere un intero positivo"
+    exit 1
+  fi
+  if [ "$MAX_WIDTH" -lt 10 ]; then
+    err "--max-width troppo piccolo (min 10)"
+    exit 1
+  fi
+fi
+
+# --------------------------
+# Resolve input
+# --------------------------
+INPUT="/dev/stdin"
+if [ -n "$INPUT_ARG" ] && [ "$INPUT_ARG" != "-" ]; then
+  INPUT="$INPUT_ARG"
+  if [ ! -f "$INPUT" ]; then
+    err "file '$INPUT' non trovato"
+    exit 1
+  fi
+fi
+
+# Se input è stdin e ci servono stats, dobbiamo poterlo leggere due volte.
+IN_FILE="$INPUT"
+if [ "$STATS" -eq 1 ] && [ "$INPUT" = "/dev/stdin" ]; then
+  tmp_in="$(mktemp -t gyte-reflow-in.XXXXXX)"
+  tmpfiles+=("$tmp_in")
+  cat > "$tmp_in"
+  IN_FILE="$tmp_in"
+fi
+
+# --------------------------
+# Trasformazioni
+# --------------------------
+
+preprocess() {
+  # - rimuove CR (CRLF)
+  # - trim spazi ai bordi (utile per idempotenza)
+  # - strip quote esterne "..." (solo se sono *entrambi* i bordi)
+  # - decodifica HTML di base
+  tr -d '\r' < "$IN_FILE" \
+    | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
+    | sed -E 's/^"(.*)"$/\1/' \
+    | sed -E \
+        -e 's/&nbsp;+/ /g' \
+        -e 's/&amp;/\&/g' \
+        -e 's/&lt;/</g' \
+        -e 's/&gt;/>/g' \
+        -e 's/&quot;/"/g' \
+        -e "s/&#39;/'/g"
+}
+
+paragraphs() {
+  # Unisce righe “spezzate” nello stesso paragrafo.
+  # Idempotenza base: se una riga termina chiaramente una frase, NON la uniamo alla successiva.
+  awk '
+    function rtrim(s){ sub(/[[:space:]]+$/, "", s); return s }
+    function ltrim(s){ sub(/^[[:space:]]+/, "", s); return s }
+    function normalize(s){ gsub(/[[:space:]]+/, " ", s); return rtrim(ltrim(s)) }
+    function is_sentence_end(s){
+      # finisce con . ! ? (eventualmente seguiti da quote/parentesi)
+      return (s ~ /[.!?]["\x27\)\]\}]*$/)
+    }
+    BEGIN{ par="" }
     {
-      # Riga vuota => chiude paragrafo
-      if ($0 ~ /^[[:space:]]*$/) {
-        if (par != "") {
-          print par
-          print ""
-          par = ""
-        }
+      line=$0
+      if (line ~ /^[[:space:]]*$/) {
+        if (par != "") { print par; print ""; par="" }
+        next
+      }
+      line = normalize(line)
+      if (line == "") next
+
+      if (par == "") {
+        par = line
       } else {
-        # Riga non vuota: accumula nel paragrafo corrente
-        gsub(/[[:space:]]+/, " ", $0)
-        if (par == "") par = $0
-        else par = par " " $0
+        if (is_sentence_end(par)) {
+          print par
+          par = line
+        } else {
+          par = par " " line
+        }
       }
     }
-    END {
-      if (par != "") print par
+    END{ if (par != "") print par }
+  '
+}
+
+sentences() {
+  # Split in frasi mantenendo la punteggiatura finale.
+  # - gestisce quote/parentesi dopo .!?
+  # - preserva righe vuote come separatori
+  awk '
+    function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+    function emit(s){ s=trim(s); if (s!="") print s }
+    {
+      line=$0
+      if (line ~ /^[[:space:]]*$/) { print ""; next }
+      line=trim(line)
+      gsub(/[[:space:]]+/, " ", line)
+
+      # Loop: trova “fine frase” = .!? + eventuali chiusure + spazio
+      while (match(line, /[.!?]["\x27\)\]\}]*[[:space:]]+/)) {
+        endpos = RSTART + RLENGTH - 1
+        chunk = substr(line, 1, endpos)
+        sub(/[[:space:]]+$/, "", chunk)
+        emit(chunk)
+        line = substr(line, endpos + 1)
+        line = trim(line)
+      }
+
+      emit(line)
     }
-  ' \
-  | sed -E 's/[[:space:]]+/ /g' \
-  | sed -E 's/([.!?])\s*/\1\n/g'
+  '
+}
+
+wrap_max_width() {
+  local w="$1"
+  awk -v W="$w" '
+    function flush_line(){ if (out!="") { print out; out="" } }
+    {
+      if ($0 ~ /^[[:space:]]*$/) { flush_line(); print ""; next }
+
+      n=split($0, a, /[[:space:]]+/)
+      out=""
+
+      for (i=1; i<=n; i++) {
+        word=a[i]
+        if (word=="") continue
+
+        if (out=="") {
+          out=word
+        } else if (length(out) + 1 + length(word) > W) {
+          print out
+          out=word
+        } else {
+          out=out " " word
+        }
+      }
+
+      flush_line()
+    }
+  '
+}
+
+run_pipeline_to_stdout() {
+  local out_file="${1:-}"
+  local do_wrap=0
+
+  if [ -n "$MAX_WIDTH" ]; then
+    do_wrap=1
+  fi
+
+  if [ -n "$out_file" ]; then
+    : > "$out_file"
+
+    if [ "$MODE_PAR" -eq 1 ] && [ "$MODE_SENT" -eq 1 ]; then
+      preprocess | paragraphs | sentences > "$out_file"
+    elif [ "$MODE_PAR" -eq 1 ]; then
+      preprocess | paragraphs > "$out_file"
+    else
+      preprocess | sentences > "$out_file"
+    fi
+
+    if [ "$do_wrap" -eq 1 ]; then
+      tmp_wrapped="$(mktemp -t gyte-reflow-wrap.XXXXXX)"
+      tmpfiles+=("$tmp_wrapped")
+      wrap_max_width "$MAX_WIDTH" < "$out_file" > "$tmp_wrapped"
+      mv -- "$tmp_wrapped" "$out_file"
+    fi
+  else
+    # streaming puro (utile in pipeline). Se c'è il wrap, lo applichiamo in coda.
+    if [ "$MODE_PAR" -eq 1 ] && [ "$MODE_SENT" -eq 1 ]; then
+      if [ "$do_wrap" -eq 1 ]; then
+        preprocess | paragraphs | sentences | wrap_max_width "$MAX_WIDTH"
+      else
+        preprocess | paragraphs | sentences
+      fi
+    elif [ "$MODE_PAR" -eq 1 ]; then
+      if [ "$do_wrap" -eq 1 ]; then
+        preprocess | paragraphs | wrap_max_width "$MAX_WIDTH"
+      else
+        preprocess | paragraphs
+      fi
+    else
+      # sentences-only
+      if [ "$do_wrap" -eq 1 ]; then
+        preprocess | sentences | wrap_max_width "$MAX_WIDTH"
+      else
+        preprocess | sentences
+      fi
+    fi
+  fi
+}
+
+if [ "$STATS" -eq 1 ]; then
+  tmp_out="$(mktemp -t gyte-reflow-out.XXXXXX)"
+  tmpfiles+=("$tmp_out")
+
+  run_pipeline_to_stdout "$tmp_out"
+
+  in_lines=$(wc -l < "$IN_FILE" | tr -d ' ')
+  out_lines=$(wc -l < "$tmp_out" | tr -d ' ')
+
+  avg_len=$(awk '
+    $0!="" { sum+=length($0); n++ }
+    END { if (n==0) print 0; else printf("%.1f", sum/n) }
+  ' < "$tmp_out")
+
+  echo "[gyte-reflow-text] input_lines=$in_lines output_lines=$out_lines avg_output_line_len=$avg_len" >&2
+
+  cat "$tmp_out"
+else
+  run_pipeline_to_stdout ""
+fi

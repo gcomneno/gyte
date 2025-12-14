@@ -398,22 +398,38 @@ gyte-video 'https://www.youtube.com/playlist?list=PLXXXXX'
 
 ### 6. Reflow testo — `gyte-reflow-text`
 
-Prende un `.txt` (ad esempio generato da `gyte-transcript`) e lo normalizza in:
+Normalizza un `.txt` (ad esempio generato da `gyte-transcript`) in modo “comodo da leggere / diffare / dare in pasto ad AI”.
 
-- paragrafi compattati (righe spezzate riunite),
-- una **frase per riga** (split su `. ! ?`).
+Di default fa **entrambi**:
+- compattazione in paragrafi (righe spezzate riunite),
+- split in frasi: **una frase per riga**.
+
+Modalità esplicite:
+- `--paragraphs` → solo compattazione paragrafi (niente split in frasi)
+- `--sentences` → solo split in frasi (assume input già compattato)
+
+Opzioni utili:
+- `--max-width N` → wrap dolce a N caratteri (non spezza parole)
+- `--stats` → statistiche su stderr (stdout resta pulito)
 
 Esempi:
 
 ```bash
-# input da file
+# default: paragraphs + sentences
 gyte-reflow-text lecture1.en.txt > lecture1.en.sentences.txt
 
-# input da stdin
-cat lecture1.en.txt | gyte-reflow-text > lecture1.en.sentences.txt
-```
+# solo compattazione
+gyte-reflow-text --paragraphs lecture1.en.txt > lecture1.en.paragraphs.txt
 
-Se non specifichi `inputfile` o passi `-`, legge da `stdin`.
+# solo split in frasi (input già compattato)
+gyte-reflow-text --sentences lecture1.en.paragraphs.txt > lecture1.en.sentences.txt
+
+# output più “terminal/diff friendly”
+gyte-reflow-text --max-width 100 lecture1.en.txt > lecture1.en.wrap.txt
+
+# stats (non sporca lo stdout)
+gyte-reflow-text --stats lecture1.en.txt > /dev/null
+```
 
 ---
 
