@@ -105,6 +105,39 @@ else
   exit_code=1
 fi
 
+# 2b) Backend STT locale (opzionale)
+# Serve per usare gyte-whisper-local (trascrizione da file locali).
+stt_bin_env="${GYTE_STT_BIN:-}"
+stt_runtime=""
+
+if [ -n "$stt_bin_env" ]; then
+  if have_cmd "$stt_bin_env"; then
+    stt_runtime="$stt_bin_env"
+    print_ok "Backend STT rilevato via GYTE_STT_BIN: $stt_runtime"
+  else
+    print_warn "GYTE_STT_BIN è impostato ma non trovato nel PATH: $stt_bin_env"
+  fi
+fi
+
+if [ -z "$stt_runtime" ]; then
+  if have_cmd whisper; then
+    stt_runtime="whisper"
+    print_ok "Backend STT opzionale rilevato: whisper (openai-whisper CLI)"
+  elif have_cmd whisper-cpp; then
+    stt_runtime="whisper-cpp"
+    print_ok "Backend STT opzionale rilevato: whisper-cpp (whisper.cpp)"
+  elif have_cmd whisper-cli; then
+    stt_runtime="whisper-cli"
+    print_ok "Backend STT opzionale rilevato: whisper-cli (whisper.cpp)"
+  elif have_cmd whispercpp; then
+    stt_runtime="whispercpp"
+    print_ok "Backend STT opzionale rilevato: whispercpp (whisper.cpp)"
+  else
+    print_warn "Nessun backend STT trovato (whisper / whisper.cpp). 'gyte-whisper-local' potrebbe non funzionare."
+    print_warn "Suggerimento: installa 'whisper' (openai-whisper CLI) oppure whisper.cpp e/o imposta GYTE_STT_BIN."
+  fi
+fi
+
 # 3) ~/.local/bin nel PATH
 LOCAL_BIN="${HOME}/.local/bin"
 case ":$PATH:" in
