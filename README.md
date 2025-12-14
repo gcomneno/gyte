@@ -431,6 +431,10 @@ gyte-reflow-text --max-width 100 lecture1.en.txt > lecture1.en.wrap.txt
 gyte-reflow-text --stats lecture1.en.txt > /dev/null
 ```
 
+Nota: lo splitter è “smarter” e prova a NON spezzare su abbreviazioni IT/EN (Prof., e.g., Mr.), decimali/versioni (3.14, v1.2) ed enumerazioni (1., A.).
+
+Demo rapida: `examples/reflow-splitter-demo.sh` (con sample in `examples/reflow-splitter-sample.txt`).
+
 ---
 
 ### 7. Traduzione AI dei transcript — `gyte-translate`
