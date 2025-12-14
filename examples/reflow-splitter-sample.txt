@@ -1,0 +1,7 @@
+Il Prof. Rossi dice: "Ok." Poi continua.
+Valore di pi greco 3.14 e versione v1.2 sono esempi.
+In inglese: e.g. this should not split. Mr. Smith agrees.
+Lista:
+1. installa
+A. configura
+Fine!
