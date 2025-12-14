@@ -13,7 +13,7 @@ GYTE è una raccolta di script CLI (Bash + Python) che:
   - estrarre audio (`gyte-audio`),
   - scaricare video (`gyte-video`);
 - elaborano testi (`gyte-reflow-text`, `gyte-merge-pl`);
-- delegano la traduzione a un **comando AI esterno** configurato via `GYTE_AI_CMD` (`gyte-translate`, `gyte-ai-openai`).
+- delegano la traduzione a un **comando AI esterno** configurato via `GYTE_AI_CMD` (`gyte-translate`, `gyte-openai`).
 
 Non è un servizio multi-tenant, ma uno strumento usato su macchine personali/server di fiducia.  
 L’obiettivo del threat model è **ridurre i rischi ragionevoli** per:
@@ -130,7 +130,7 @@ Leak di segreti, comandi involontariamente pericolosi.
   * non stampa mai il contenuto completo di `GYTE_AI_CMD` → mostra solo il “nome” (primo token);
   * permette un limite opzionale `GYTE_AI_MAX_INPUT_BYTES` per evitare input enormi non voluti;
   * valida input file e lingue.
-* `gyte-ai-openai`:
+* `gyte-openai`:
 
   * legge `OPENAI_API_KEY` solo da env;
   * rifiuta placeholder tipo `sk-...`, `YOUR_API_KEY_HERE`;
@@ -152,7 +152,7 @@ Costi imprevisti su API, blocchi temporanei, UX pessima.
 
 **Mitigazioni attuali:**
 
-* `gyte-ai-openai`:
+* `gyte-openai`:
 
   * `GYTE_AI_MAX_INPUT_CHARS` con default ragionevole.
 * `gyte-translate`:

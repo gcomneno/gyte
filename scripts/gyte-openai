@@ -24,7 +24,7 @@ def eprintln(msg: str) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        prog="gyte-ai-openai",
+        prog="gyte-openai",
         description=(
             "Wrapper OpenAI per gyte-translate.\n"
             "Legge il testo da stdin, usa SRC_LANG / TARGET_LANG e stampa il testo tradotto su stdout."
@@ -91,7 +91,7 @@ def resolve_api_key() -> str:
     if api_key in {"sk-...", "YOUR_API_KEY_HERE", "INSERT_YOUR_KEY_HERE"}:
         eprintln(
             "[ERROR] OPENAI_API_KEY sembra un placeholder (es. 'sk-...' o simili).\n"
-            "        Configura una chiave reale nel tuo ambiente prima di usare gyte-ai-openai."
+            "        Configura una chiave reale nel tuo ambiente prima di usare gyte-openai."
         )
         sys.exit(1)
 
@@ -117,7 +117,7 @@ def main() -> None:
     system_prompt = load_system_prompt(args.system_prompt)
 
     if args.dry_run:
-        eprintln("gyte-ai-openai (dry-run)")
+        eprintln("gyte-openai (dry-run)")
         eprintln(f"  Model        : {args.model}")
         eprintln(f"  SRC_LANG     : {src_lang}")
         eprintln(f"  TARGET_LANG  : {tgt_lang}")

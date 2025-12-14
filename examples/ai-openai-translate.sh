@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Esempio: usare gyte-translate + gyte-ai-openai per tradurre un transcript
+# Esempio: usare gyte-translate + gyte-openai per tradurre un transcript
 #
 # Prerequisiti:
 #   - variabile OPENAI_API_KEY impostata
 #   - comando GYTE_AI_CMD impostato, es.:
-#       export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
+#       export GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini'
 #
 # Uso:
 #   ./ai-openai-translate.sh
@@ -18,7 +18,7 @@ Uso:
 
 Prerequisiti:
   export OPENAI_API_KEY='sk-...'
-  export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
+  export GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini'
 
 Questo script traduce:
   sample-transcript.sentences.txt  ->  sample-transcript.sentences.en.txt
@@ -42,12 +42,12 @@ fi
 if [ -z "${GYTE_AI_CMD:-}" ]; then
   echo "Errore: GYTE_AI_CMD non impostata." >&2
   echo "Esempio:" >&2
-  echo "  export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'" >&2
+  echo "  export GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini'" >&2
   exit 1
 fi
 
 if [ -z "${OPENAI_API_KEY:-}" ]; then
-  echo "Errore: OPENAI_API_KEY non impostata (necessaria per gyte-ai-openai)." >&2
+  echo "Errore: OPENAI_API_KEY non impostata (necessaria per gyte-openai)." >&2
   exit 1
 fi
 

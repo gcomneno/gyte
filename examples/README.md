@@ -19,7 +19,7 @@ Questa directory contiene **esempi minimi e sicuri** per usare GYTE.
   Mostra come usare i comandi principali GYTE con una URL di esempio.
 
 - `ai-openai-translate.sh`  
-  Esempio di traduzione usando il wrapper `gyte-ai-openai` via `gyte-translate`.
+  Esempio di traduzione usando il wrapper `gyte-openai` via `gyte-translate`.
 
 - `mit-ocw-python.sh`  
   Esempio di workflow su playlist (simile a MIT OCW) usando `gyte-transcript-pl`
@@ -31,7 +31,7 @@ Questa directory contiene **esempi minimi e sicuri** per usare GYTE.
 
   ```bash
   export OPENAI_API_KEY='sk-...'
-  export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
+  export GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini'
   ```
 
 Non aggiungere mai in questo directory:
