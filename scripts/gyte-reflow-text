@@ -1,12 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Uso:
-#   gyte-reflow-text [opzioni] [inputfile]  > output.txt
-#   cat input.txt | gyte-reflow-text [opzioni] > output.txt
-#
-# Se inputfile è omesso o uguale a "-", legge da stdin.
-
 usage() {
   cat >&2 <<'EOF_USAGE'
 Uso:
@@ -14,12 +8,12 @@ Uso:
 
 Se inputfile è omesso o uguale a "-", il testo viene letto da stdin.
 
-Modalità:
-  --paragraphs   Solo unione/compattazione righe in paragrafi (default: ON se non specifichi modalità)
-  --sentences    Solo split in frasi (default: ON se non specifichi modalità)
+Modalita':
+  --paragraphs   Solo unione/compattazione righe in paragrafi (default: ON se non specifichi modalita')
+  --sentences    Solo split in frasi (default: ON se non specifichi modalita')
 
 Opzioni:
-  --max-width N  Wrap “dolce” a N caratteri (non rompe parole; se una parola supera N, resta intera)
+  --max-width N  Wrap "dolce" a N caratteri (non rompe parole; se una parola supera N, resta intera)
   --stats        Stampa statistiche su stderr (stdout resta solo testo)
   -h, --help     Mostra questo help
 
@@ -30,14 +24,14 @@ Esempi:
   # solo compattazione (nessun split in frasi)
   gyte-reflow-text --paragraphs input.txt > out.paragraphs.txt
 
-  # solo split in frasi (input già compattato)
+  # solo split in frasi (input gia' compattato)
   gyte-reflow-text --sentences input.txt > out.sentences.txt
 
-  # output più “diff/terminal friendly”
+  # output piu' "diff/terminal friendly"
   gyte-reflow-text --max-width 100 input.txt > out.wrap.txt
 
   # stats (non sporca lo stdout)
-  gyte-reflow-text --stats input.txt > out.txt
+  gyte-reflow-text --stats input.txt > /dev/null
 EOF_USAGE
 }
 
@@ -62,42 +56,22 @@ INPUT_ARG=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    --paragraphs)
-      MODE_PAR=1
-      shift
-      ;;
-    --sentences)
-      MODE_SENT=1
-      shift
-      ;;
+    -h|--help) usage; exit 0 ;;
+    --paragraphs) MODE_PAR=1; shift ;;
+    --sentences) MODE_SENT=1; shift ;;
     --max-width)
-      if [ "$#" -lt 2 ]; then
-        err "--max-width richiede un valore N"
-        usage
-        exit 1
-      fi
+      [ "$#" -ge 2 ] || { err "--max-width richiede un valore N"; usage; exit 1; }
       MAX_WIDTH="$2"
       shift 2
       ;;
-    --stats)
-      STATS=1
-      shift
-      ;;
-    --)
-      shift
-      break
-      ;;
+    --stats) STATS=1; shift ;;
+    --) shift; break ;;
     -*)
       err "opzione sconosciuta: $1"
       usage
       exit 1
       ;;
     *)
-      # primo non-opzione = inputfile; altri = errore
       if [ -z "$INPUT_ARG" ]; then
         INPUT_ARG="$1"
         shift
@@ -110,7 +84,6 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-# eventuali argomenti dopo "--"
 if [ "$#" -gt 0 ]; then
   if [ -z "$INPUT_ARG" ] && [ "$#" -eq 1 ]; then
     INPUT_ARG="$1"
@@ -121,7 +94,7 @@ if [ "$#" -gt 0 ]; then
   fi
 fi
 
-# Default: se non specifichi modalità, fai entrambe (compat con comportamento attuale)
+# Default compat: se non specifichi modalita', fai entrambe.
 if [ "$MODE_PAR" -eq 0 ] && [ "$MODE_SENT" -eq 0 ]; then
   MODE_PAR=1
   MODE_SENT=1
@@ -129,14 +102,8 @@ fi
 
 # valida max-width
 if [ -n "$MAX_WIDTH" ]; then
-  if ! [[ "$MAX_WIDTH" =~ ^[0-9]+$ ]]; then
-    err "--max-width deve essere un intero positivo"
-    exit 1
-  fi
-  if [ "$MAX_WIDTH" -lt 10 ]; then
-    err "--max-width troppo piccolo (min 10)"
-    exit 1
-  fi
+  [[ "$MAX_WIDTH" =~ ^[0-9]+$ ]] || { err "--max-width deve essere un intero positivo"; exit 1; }
+  [ "$MAX_WIDTH" -ge 10 ] || { err "--max-width troppo piccolo (min 10)"; exit 1; }
 fi
 
 # --------------------------
@@ -145,13 +112,9 @@ fi
 INPUT="/dev/stdin"
 if [ -n "$INPUT_ARG" ] && [ "$INPUT_ARG" != "-" ]; then
   INPUT="$INPUT_ARG"
-  if [ ! -f "$INPUT" ]; then
-    err "file '$INPUT' non trovato"
-    exit 1
-  fi
+  [ -f "$INPUT" ] || { err "file '$INPUT' non trovato"; exit 1; }
 fi
 
-# Se input è stdin e ci servono stats, dobbiamo poterlo leggere due volte.
 IN_FILE="$INPUT"
 if [ "$STATS" -eq 1 ] && [ "$INPUT" = "/dev/stdin" ]; then
   tmp_in="$(mktemp -t gyte-reflow-in.XXXXXX)"
@@ -161,14 +124,22 @@ if [ "$STATS" -eq 1 ] && [ "$INPUT" = "/dev/stdin" ]; then
 fi
 
 # --------------------------
-# Trasformazioni
+# Helper: build AWK programs as temp files (zero escaping rognoso)
 # --------------------------
+make_awk_file() {
+  local name="$1"
+  local content="$2"
+  local f
+  f="$(mktemp -t "gyte-${name}.XXXXXX.awk")"
+  tmpfiles+=("$f")
+  printf '%s\n' "$content" > "$f"
+  echo "$f"
+}
 
+# --------------------------
+# Preprocess
+# --------------------------
 preprocess() {
-  # - rimuove CR (CRLF)
-  # - trim spazi ai bordi (utile per idempotenza)
-  # - strip quote esterne "..." (solo se sono *entrambi* i bordi)
-  # - decodifica HTML di base
   tr -d '\r' < "$IN_FILE" \
     | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' \
     | sed -E 's/^"(.*)"$/\1/' \
@@ -181,68 +152,222 @@ preprocess() {
         -e "s/&#39;/'/g"
 }
 
+# --------------------------
+# Paragraph compaction
+# --------------------------
 paragraphs() {
-  # Unisce righe “spezzate” nello stesso paragrafo.
-  # Idempotenza base: se una riga termina chiaramente una frase, NON la uniamo alla successiva.
-  awk '
-    function rtrim(s){ sub(/[[:space:]]+$/, "", s); return s }
-    function ltrim(s){ sub(/^[[:space:]]+/, "", s); return s }
-    function normalize(s){ gsub(/[[:space:]]+/, " ", s); return rtrim(ltrim(s)) }
-    function is_sentence_end(s){
-      # finisce con . ! ? (eventualmente seguiti da quote/parentesi)
-      return (s ~ /[.!?]["\x27\)\]\}]*$/)
-    }
-    BEGIN{ par="" }
-    {
-      line=$0
-      if (line ~ /^[[:space:]]*$/) {
-        if (par != "") { print par; print ""; par="" }
-        next
-      }
-      line = normalize(line)
-      if (line == "") next
+  local awk_prog
+  awk_prog="$(make_awk_file "reflow_paragraphs" "$(cat <<'AWK'
+function rtrim(s){ sub(/[[:space:]]+$/, "", s); return s }
+function ltrim(s){ sub(/^[[:space:]]+/, "", s); return s }
+function normalize(s){ gsub(/[[:space:]]+/, " ", s); return rtrim(ltrim(s)) }
 
-      if (par == "") {
-        par = line
-      } else {
-        if (is_sentence_end(par)) {
-          print par
-          par = line
-        } else {
-          par = par " " line
-        }
-      }
-    }
-    END{ if (par != "") print par }
-  '
+function strip_closers(s) {
+  while (s ~ /["'\)\]\}]+$/) sub(/["'\)\]\}]+$/, "", s)
+  return s
 }
 
-sentences() {
-  # Split in frasi mantenendo la punteggiatura finale.
-  # - gestisce quote/parentesi dopo .!?
-  # - preserva righe vuote come separatori
-  awk '
-    function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
-    function emit(s){ s=trim(s); if (s!="") print s }
-    {
-      line=$0
-      if (line ~ /^[[:space:]]*$/) { print ""; next }
-      line=trim(line)
-      gsub(/[[:space:]]+/, " ", line)
+function tolow(s){ return tolower(s) }
 
-      # Loop: trova “fine frase” = .!? + eventuali chiusure + spazio
-      while (match(line, /[.!?]["\x27\)\]\}]*[[:space:]]+/)) {
-        endpos = RSTART + RLENGTH - 1
-        chunk = substr(line, 1, endpos)
-        sub(/[[:space:]]+$/, "", chunk)
-        emit(chunk)
-        line = substr(line, endpos + 1)
-        line = trim(line)
-      }
+function is_abbrev_end(s, t) {
+  t = tolow(strip_closers(s))
 
-      emit(line)
+  # abbreviazioni IT/EN base
+  if (t ~ /(^|[[:space:]])(prof|dott|dr|ing|avv|sig|sig\.ra|sig\.na|ecc|es|mr|mrs|ms|jr|sr|etc|vs|no|nr|n)\.$/) return 1
+  if (t ~ /(^|[[:space:]])(e\.g|i\.e)\.$/) return 1
+  if (t ~ /(^|[[:space:]])(s\.p\.a|s\.r\.l|s\.n\.c)\.$/) return 1
+
+  # acronimi tipo U.S. / U.K. (2+ blocchi lettera+.)
+  if (t ~ /(^|[[:space:]])([a-z]\.){2,}$/) return 1
+
+  return 0
+}
+
+function is_sentence_end(s) {
+  if (s !~ /[.!?]["'\)\]\}]*$/) return 0
+  if (is_abbrev_end(s)) return 0
+  return 1
+}
+
+BEGIN { par="" }
+{
+  line=$0
+  if (line ~ /^[[:space:]]*$/) {
+    if (par != "") { print par; print ""; par="" }
+    next
+  }
+  line = normalize(line)
+  if (line == "") next
+
+  if (par == "") {
+    par = line
+  } else {
+    if (is_sentence_end(par)) {
+      print par
+      par = line
+    } else {
+      par = par " " line
     }
-  '
+  }
+}
+END { if (par != "") print par }
+AWK
+)")"
+  awk -f "$awk_prog"
+}
+
+# --------------------------
+# Sentence splitting (smarter)
+# --------------------------
+sentences() {
+  local awk_prog
+  awk_prog="$(make_awk_file "reflow_sentences" "$(cat <<'AWK'
+function trim(s){ sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
+function emit(s){ s=trim(s); if (s!="") print s }
+
+function protect_numeric_dots(s, placeholder, dotpos, p) {
+  # proteggi \d.\d (decimali, IP-like ecc.)
+  while (match(s, /[0-9]\.[0-9]/)) {
+    dotpos = RSTART + 1
+    s = substr(s, 1, dotpos-1) placeholder substr(s, dotpos+1)
+  }
+  # proteggi pattern tipo v1.2 / r2.0 / x10.5 (lettera + cifre . cifra)
+  while (match(s, /[A-Za-z][0-9]*\.[0-9]/)) {
+    p = substr(s, RSTART, RLENGTH)
+    dotpos = index(p, ".")
+    if (dotpos > 0) {
+      dotpos = RSTART + dotpos - 1
+      s = substr(s, 1, dotpos-1) placeholder substr(s, dotpos+1)
+    } else {
+      break
+    }
+  }
+  return s
+}
+
+function protect_token_dots(s, token, placeholder, pos, pre, mid, post) {
+  while ((pos = index(s, token)) > 0) {
+    pre  = substr(s, 1, pos-1)
+    mid  = substr(s, pos, length(token))
+    post = substr(s, pos + length(token))
+    gsub(/\./, placeholder, mid)
+    s = pre mid post
+  }
+  return s
+}
+
+function protect_abbrevs(s, placeholder, i) {
+  n = 0
+  toks[++n] = "Prof."
+  toks[++n] = "prof."
+  toks[++n] = "Dott."
+  toks[++n] = "dott."
+  toks[++n] = "Dr."
+  toks[++n] = "dr."
+  toks[++n] = "Ing."
+  toks[++n] = "ing."
+  toks[++n] = "Avv."
+  toks[++n] = "avv."
+  toks[++n] = "Sig."
+  toks[++n] = "sig."
+  toks[++n] = "Sig.ra"
+  toks[++n] = "sig.ra"
+  toks[++n] = "Sig.na"
+  toks[++n] = "sig.na"
+  toks[++n] = "ecc."
+  toks[++n] = "Ecc."
+  toks[++n] = "es."
+  toks[++n] = "Es."
+  toks[++n] = "Mr."
+  toks[++n] = "mr."
+  toks[++n] = "Mrs."
+  toks[++n] = "mrs."
+  toks[++n] = "Ms."
+  toks[++n] = "ms."
+  toks[++n] = "Jr."
+  toks[++n] = "jr."
+  toks[++n] = "Sr."
+  toks[++n] = "sr."
+  toks[++n] = "etc."
+  toks[++n] = "Etc."
+  toks[++n] = "vs."
+  toks[++n] = "Vs."
+  toks[++n] = "No."
+  toks[++n] = "no."
+  toks[++n] = "Nr."
+  toks[++n] = "nr."
+  toks[++n] = "n."
+
+  toks[++n] = "e.g."
+  toks[++n] = "i.e."
+  toks[++n] = "E.g."
+  toks[++n] = "I.e."
+
+  toks[++n] = "S.p.A."
+  toks[++n] = "s.p.a."
+  toks[++n] = "S.r.l."
+  toks[++n] = "s.r.l."
+  toks[++n] = "S.n.c."
+  toks[++n] = "s.n.c."
+
+  toks[++n] = "U.S."
+  toks[++n] = "u.s."
+  toks[++n] = "U.K."
+  toks[++n] = "u.k."
+
+  for (i=1; i<=n; i++) {
+    s = protect_token_dots(s, toks[i], placeholder)
+  }
+  return s
+}
+
+function restore_placeholder(s, placeholder) {
+  gsub(placeholder, ".", s)
+  return s
+}
+
+BEGIN { placeholder="__GYTEDOT__" }
+{
+  line=$0
+  if (line ~ /^[[:space:]]*$/) { print ""; next }
+
+  line = trim(line)
+  gsub(/[[:space:]]+/, " ", line)
+
+  line = protect_numeric_dots(line, placeholder)
+  line = protect_abbrevs(line, placeholder)
+
+  # split: . ! ? + eventuali closers ASCII + spazio
+  while (match(line, /[.!?]["'\)\]\}]*[[:space:]]+/)) {
+    endpos = RSTART + RLENGTH - 1
+    chunk = substr(line, 1, endpos)
+    sub(/[[:space:]]+$/, "", chunk)
+
+    tmp = trim(chunk)
+    while (tmp ~ /["'\)\]\}]+$/) sub(/["'\)\]\}]+$/, "", tmp)
+
+    # evita split su enumerazioni tipo "1." o "A."
+    if (tmp ~ /^[0-9]{1,3}\.$/ || tmp ~ /^[A-Za-z]\.$/) {
+      sub(/[[:space:]]+$/, " ", chunk)
+      rest = substr(line, endpos + 1)
+      rest = trim(rest)
+      line = chunk rest
+      continue
+    }
+
+    chunk = restore_placeholder(chunk, placeholder)
+    emit(chunk)
+
+    line = substr(line, endpos + 1)
+    line = trim(line)
+  }
+
+  line = restore_placeholder(line, placeholder)
+  emit(line)
+}
+AWK
+)")"
+  awk -f "$awk_prog"
 }
 
 wrap_max_width() {
@@ -274,13 +399,10 @@ wrap_max_width() {
   '
 }
 
-run_pipeline_to_stdout() {
+run_pipeline_to_file_or_stream() {
   local out_file="${1:-}"
   local do_wrap=0
-
-  if [ -n "$MAX_WIDTH" ]; then
-    do_wrap=1
-  fi
+  [ -n "$MAX_WIDTH" ] && do_wrap=1
 
   if [ -n "$out_file" ]; then
     : > "$out_file"
@@ -300,7 +422,6 @@ run_pipeline_to_stdout() {
       mv -- "$tmp_wrapped" "$out_file"
     fi
   else
-    # streaming puro (utile in pipeline). Se c'è il wrap, lo applichiamo in coda.
     if [ "$MODE_PAR" -eq 1 ] && [ "$MODE_SENT" -eq 1 ]; then
       if [ "$do_wrap" -eq 1 ]; then
         preprocess | paragraphs | sentences | wrap_max_width "$MAX_WIDTH"
@@ -314,7 +435,6 @@ run_pipeline_to_stdout() {
         preprocess | paragraphs
       fi
     else
-      # sentences-only
       if [ "$do_wrap" -eq 1 ]; then
         preprocess | sentences | wrap_max_width "$MAX_WIDTH"
       else
@@ -328,7 +448,7 @@ if [ "$STATS" -eq 1 ]; then
   tmp_out="$(mktemp -t gyte-reflow-out.XXXXXX)"
   tmpfiles+=("$tmp_out")
 
-  run_pipeline_to_stdout "$tmp_out"
+  run_pipeline_to_file_or_stream "$tmp_out"
 
   in_lines=$(wc -l < "$IN_FILE" | tr -d ' ')
   out_lines=$(wc -l < "$tmp_out" | tr -d ' ')
@@ -339,8 +459,7 @@ if [ "$STATS" -eq 1 ]; then
   ' < "$tmp_out")
 
   echo "[gyte-reflow-text] input_lines=$in_lines output_lines=$out_lines avg_output_line_len=$avg_len" >&2
-
   cat "$tmp_out"
 else
-  run_pipeline_to_stdout ""
+  run_pipeline_to_file_or_stream ""
 fi
