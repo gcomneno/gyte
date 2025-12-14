@@ -36,7 +36,7 @@ Basato su [`yt-dlp`](https://github.com/yt-dlp/yt-dlp), con script pensati per c
 
 - `ffmpeg` installato (per l'estrazione audio/video)
 
-- Per il modulo AI opzionale (`gyte-translate` + `gyte-ai-openai`):
+- Per il modulo AI opzionale (`gyte-translate` + `gyte-openai`):
   - Python 3
   - libreria `openai` installata nel tuo ambiente:
 
@@ -555,7 +555,7 @@ Questo permette di usare:
 ---
 
 ## Integrazione AI (opzionale)
-Alcune funzioni (es. `gyte-ai-openai` + `gyte-translate`) richiedono il client Python `openai`.
+Alcune funzioni (es. `gyte-openai` + `gyte-translate`) richiedono il client Python `openai`.
 
 Installazione opzionale:
 ```bash
@@ -567,16 +567,16 @@ pip install -r requirements-optional.txt
 Poi esporta:
 ```bash
 export OPENAI_API_KEY='sk-...'
-export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
+export GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini'
 ```
 
 ---
 
-### Esempio: usare `gyte-translate` con OpenAI (`gyte-ai-openai`)
+### Esempio: usare `gyte-translate` con OpenAI (`gyte-openai`)
 
 Il repository include un wrapper di riferimento per OpenAI:
 
-- script: `scripts/gyte-ai-openai`
+- script: `scripts/gyte-openai`
 - uso: come valore di `GYTE_AI_CMD`
 
 > ⚠️ **Sicurezza API key**
@@ -594,7 +594,7 @@ export OPENAI_API_KEY="sk-..."   # NON committare mai questa riga
 Poi puoi configurare GYTE così:
 
 ```bash
-export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
+export GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini'
 
 # esempio: traduci da italiano a inglese
 gyte-translate --from it --to en sample.it.txt
@@ -608,7 +608,7 @@ Puoi verificare la configurazione senza chiamare l’API con `--dry-run`:
 ```bash
 echo "Ciao mondo, questo è un test." > sample.it.txt
 
-SRC_LANG=it TARGET_LANG=en   gyte-ai-openai --model gpt-4.1-mini --dry-run < sample.it.txt
+SRC_LANG=it TARGET_LANG=en   gyte-openai --model gpt-4.1-mini --dry-run < sample.it.txt
 ```
 
 Il wrapper:
@@ -637,7 +637,7 @@ La cartella `examples` contiene esempi pratici di utilizzo di GYTE:
   Lo stesso testo, dopo il passaggio con `gyte-reflow-text` (una frase per riga).
 
 - `ai-openai-translate.sh`  
-  Esempio di utilizzo combinato di `gyte-translate` + `gyte-ai-openai` (senza mai salvare l’API key in chiaro negli script).
+  Esempio di utilizzo combinato di `gyte-translate` + `gyte-openai` (senza mai salvare l’API key in chiaro negli script).
 
 Questi file sono solo dimostrativi: sostituisci le URL e i nomi file con quelli che ti servono nel tuo contesto reale.
 

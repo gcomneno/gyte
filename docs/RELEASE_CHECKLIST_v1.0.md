@@ -133,10 +133,10 @@ source .venv/bin/activate
 pip install -r requirements-optional.txt
 ```
 
-### 6.2 gyte-ai-openai dry-run
+### 6.2 gyte-openai dry-run
 ```bash
 export OPENAI_API_KEY='sk-...'
-echo "Ciao mondo" | gyte-ai-openai --dry-run
+echo "Ciao mondo" | gyte-openai --dry-run
 ```
 
 mostra config risolta
@@ -145,7 +145,7 @@ conferma modello e lingue
 
 ### 6.3 gyte-translate dry-run + reale
 ```bash
-export GYTE_AI_CMD='gyte-ai-openai --model gpt-4.1-mini'
+export GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini'
 
 gyte-translate \
   --from it \

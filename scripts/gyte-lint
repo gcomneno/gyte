@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! command -v shellcheck >/dev/null 2>&1; then
+  echo "Errore: shellcheck non trovato nel PATH." >&2
+  echo "Ubuntu: sudo apt-get update && sudo apt-get install -y shellcheck" >&2
+  exit 1
+fi
+
+shopt -s nullglob
+shell_files=()
+
+is_shell_shebang() {
+  # Riconosce sia shebang diretti (#!/bin/bash) che via env (#!/usr/bin/env bash)
+  # shellcheck disable=SC2001
+  local first
+  first="$(head -n 1 "$1" 2>/dev/null || true)"
+
+  # Normalizza spazi multipli
+  # Esempi validi:
+  #   #!/bin/bash
+  #   #!/usr/bin/env bash
+  #   #!/usr/bin/env -S bash
+  #   #!/usr/bin/env sh
+  echo "$first" | grep -Eq '^#!.*\b(sh|bash|dash|ksh)\b' \
+    || echo "$first" | grep -Eq '^#!.*\benv\b.*\b(sh|bash|dash|ksh)\b'
+}
+
+for f in scripts/gyte-*; do
+  if [ -f "$f" ] && is_shell_shebang "$f"; then
+    shell_files+=("$f")
+  fi
+done
+
+if [ ${#shell_files[@]} -eq 0 ]; then
+  echo "Nessun file shell trovato in scripts/gyte-* (niente da fare)."
+  exit 0
+fi
+
+echo "Eseguo shellcheck sui seguenti file:"
+printf '  - %s\n' "${shell_files[@]}"
+
+shellcheck "${shell_files[@]}"
+echo "OK ✅"
