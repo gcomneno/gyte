@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# GYTE bin wrapper: delegates to ../scripts/<same-name> preserving stdout/stderr/exit-code.
+SELF="$(basename "$0")"
+ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+TARGET="$ROOT/scripts/$SELF"
+
+if [[ ! -x "$TARGET" ]]; then
+  echo "ERRORE: wrapper '$SELF' non trova script eseguibile: $TARGET" >&2
+  exit 2
+fi
+
+exec "$TARGET" "$@"
