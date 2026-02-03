@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import re
+import sys
+
+
+def eprint(*a, **k):
+    print(*a, file=sys.stderr, **k)
+
+
+def read_stdin() -> str:
+    data = sys.stdin.read()
+    return data.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def guess_lang_it_en(text: str) -> str:
+    # Heuristica leggera: 'it', 'en' o 'unknown'
+    t = text.lower()
+    if re.search(r"[àèéìòù]", t):
+        return "it"
+
+    tokens = re.findall(r"[a-z']+", t)
+    if not tokens:
+        return "unknown"
+
+    it_stop = {
+        "il","lo","la","i","gli","le","un","uno","una",
+        "che","non","per","con","su","del","della","dei","delle",
+        "nel","nella","nelle","alla","alle","agli","anche","piu","più",
+        "come","quindi","questo","questa","quello","quella","tra","fra",
+        "poi","ma","se","si","sì","no"
+    }
+    en_stop = {
+        "the","and","or","of","to","in","for","with","on","is","are","was","were",
+        "this","that","it","as","from","by","be","not","you","we","they","a","an"
+    }
+
+    it = sum(1 for w in tokens if w in it_stop)
+    en = sum(1 for w in tokens if w in en_stop)
+
+    if it >= 2 and it >= int(en * 1.3):
+        return "it"
+    if en >= 2 and en >= int(it * 1.3):
+        return "en"
+    return "unknown"
+
+
+def build_prompt(depth: int, title: str, url: str, transcript: str) -> list[dict]:
+    system = (
+        "Sei un assistente che crea riassunti affidabili da trascrizioni YouTube.\n"
+        "Regole NON negoziabili:\n"
+        "- Non inventare fatti non presenti.\n"
+        "- Se la trascrizione è incompleta/confusa, dillo esplicitamente.\n"
+        "- Lingua output: ITALIANO; se NON possibile, ENGLISH. Se non riesci in IT/EN: scrivi 'LANGUAGE_ERROR'.\n"
+        "- Stile: semplice, curioso, 'per scimmiette curiose' (leggero ma non scemo).\n"
+    )
+
+    if depth <= 0:
+        fmt = (
+            "Output richiesto:\n"
+            "- UNA SOLA RIGA (niente markdown, niente virgolette), max ~180 caratteri.\n"
+        )
+    elif depth == 1:
+        fmt = (
+            "Output richiesto (markdown semplice):\n"
+            "- Prima riga: HEADLINE (una riga, max ~160 caratteri)\n"
+            "- Poi 4-6 bullet che spiegano cosa succede/si impara\n"
+        )
+    elif depth == 2:
+        fmt = (
+            "Output richiesto (markdown semplice):\n"
+            "- Prima riga: HEADLINE (una riga, max ~160 caratteri)\n"
+            "- Poi 8-12 bullet\n"
+            "- Poi 'Spunti:' con 2 bullet (idee/connessioni pratiche)\n"
+        )
+    else:
+        fmt = (
+            "Output richiesto (markdown semplice):\n"
+            "- Prima riga: HEADLINE (una riga, max ~160 caratteri)\n"
+            "- Poi sezione 'In breve' (5 bullet)\n"
+            "- Poi sezione 'Dettagli' (10-16 bullet)\n"
+            "- Poi sezione 'Domande' (3 bullet)\n"
+        )
+
+    user = (
+        f"TITOLO VIDEO: {title}\n"
+        f"URL: {url}\n\n"
+        f"{fmt}\n"
+        "Se la trascrizione non basta, produci comunque HEADLINE + bullet, "
+        "ma dichiarando chiaramente i limiti (senza inventare).\n\n"
+        "TRASCRIZIONE:\n"
+        f"{transcript}\n"
+    )
+
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def openai_chat(model: str, messages: list[dict], temperature: float = 0.2) -> str:
+    # Solo SDK OpenAI moderno (openai>=1.x)
+    from openai import OpenAI  # type: ignore
+
+    client = OpenAI()
+    resp = client.chat.completions.create(
+        model=model,
+        messages=messages,
+        temperature=temperature,
+    )
+    return (resp.choices[0].message.content or "").strip()
+
+
+def normalize_output(depth: int, out: str) -> str:
+    lines = [ln.rstrip() for ln in out.replace("\r", "").splitlines()]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        return ""
+
+    if depth <= 0:
+        for ln in lines:
+            ln = ln.strip()
+            if ln:
+                return ln
+        return ""
+
+    headline = ""
+    rest = []
+    for i, ln in enumerate(lines):
+        s = ln.strip()
+        if not s:
+            continue
+        s = re.sub(r"^#{1,6}\s+", "", s)
+        headline = s
+        rest = lines[i + 1 :]
+        break
+
+    if not headline:
+        headline = "Trascrizione insufficiente: output vuoto dal modello."
+
+    bullets: list[str] = []
+    for ln in rest:
+        s = ln.strip()
+        if not s:
+            continue
+        if depth >= 2 and re.match(r"^(spunti|in breve|dettagli|domande)\s*:?\s*$", s.lower()):
+            bullets.append(s if s.endswith(":") else (s + ":"))
+            continue
+        if s.startswith(("-", "*", "•")):
+            s2 = re.sub(r"^[-*•]\s*", "- ", s)
+            bullets.append(s2)
+        else:
+            bullets.append("- " + s)
+
+    if depth == 1:
+        only = [b for b in bullets if b.startswith("- ")]
+        only = only[:6]
+        while len(only) < 4:
+            only.append("- (dettaglio non chiarissimo dalla trascrizione)")
+        bullets = only
+
+    return ("\n".join([headline] + bullets).strip() + "\n")
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="gyte-openai-digest")
+    p.add_argument("--model", default=os.getenv("GYTE_DIGEST_MODEL", "gpt-4.1-mini"))
+    p.add_argument("--depth", type=int, default=int(os.getenv("GYTE_DIGEST_DEPTH", "1")))
+    p.add_argument("--max-chars", type=int, default=int(os.getenv("GYTE_DIGEST_MAX_CHARS", "24000")))
+    p.add_argument("--dry-run", action="store_true")
+    args = p.parse_args()
+
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key:
+        eprint("[gyte-openai-digest] ERRORE: manca OPENAI_API_KEY nell'ambiente")
+        return 2
+
+    if args.depth < 0:
+        args.depth = 0
+    if args.depth > 3:
+        eprint("[gyte-openai-digest] ERRORE: --depth supporta solo 0..3")
+        return 2
+
+    title = os.getenv("GYTE_DIGEST_TITLE", "").strip() or "(titolo non disponibile)"
+    url = os.getenv("GYTE_DIGEST_URL", "").strip() or "(url non disponibile)"
+
+    if args.dry_run:
+        # check rapido per "auto backend" in gyte-digest
+        eprint("[gyte-openai-digest] dry-run OK")
+        eprint("[gyte-openai-digest] model =", args.model)
+        eprint("[gyte-openai-digest] depth =", args.depth)
+        eprint("[gyte-openai-digest] max_chars =", args.max_chars)
+        eprint("[gyte-openai-digest] title =", title)
+        eprint("[gyte-openai-digest] url   =", url)
+        return 0
+
+    transcript = read_stdin().strip()
+    if not transcript:
+        if args.depth <= 0:
+            print("Trascrizione insufficiente: nessun testo in input.")
+        else:
+            print(
+                "Trascrizione insufficiente: nessun testo in input.\n"
+                "- (nessun contenuto)\n- (nessun contenuto)\n- (nessun contenuto)\n- (nessun contenuto)\n"
+            )
+        return 0
+
+    if len(transcript) > args.max_chars:
+        transcript = transcript[: args.max_chars] + "\n\n[...TRASCRIZIONE TRONCATA...]\n"
+
+    messages = build_prompt(args.depth, title, url, transcript)
+
+    try:
+        raw = openai_chat(args.model, messages)
+    except Exception as e:
+        eprint("[gyte-openai-digest] ERRORE: OpenAI call failed:", repr(e))
+        return 3
+
+    norm = normalize_output(args.depth, raw)
+    if not norm:
+        eprint("[gyte-openai-digest] ERRORE: output vuoto dal modello")
+        return 3
+
+    if "LANGUAGE_ERROR" in norm:
+        eprint("[gyte-openai-digest] ERRORE: modello ha risposto LANGUAGE_ERROR (non IT/EN)")
+        return 4
+
+    lang = guess_lang_it_en(norm)
+    if lang not in {"it", "en"}:
+        # Retry EN forzato (2° e ultimo tentativo)
+        system_en = (
+            "You create faithful summaries from YouTube transcripts.\n"
+            "Non-negotiable:\n"
+            "- Do not invent facts.\n"
+            "- Output language: ENGLISH only. If you cannot, write 'LANGUAGE_ERROR'.\n"
+        )
+        user_en = build_prompt(args.depth, title, url, transcript)[1]["content"]
+        try:
+            raw2 = openai_chat(args.model, [{"role": "system", "content": system_en}, {"role": "user", "content": user_en}])
+        except Exception as e:
+            eprint("[gyte-openai-digest] ERRORE (retry EN):", repr(e))
+            return 3
+
+        norm2 = normalize_output(args.depth, raw2)
+        if not norm2 or "LANGUAGE_ERROR" in norm2:
+            eprint("[gyte-openai-digest] ERRORE: lingua non IT/EN (retry fallito)")
+            return 4
+
+        if guess_lang_it_en(norm2) != "en":
+            eprint("[gyte-openai-digest] ERRORE: output non EN dopo retry EN (STRICT)")
+            return 4
+
+        norm = norm2
+
+    if args.depth <= 0:
+        sys.stdout.write(norm.splitlines()[0].strip() + "\n")
+    else:
+        sys.stdout.write(norm)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

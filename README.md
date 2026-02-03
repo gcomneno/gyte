@@ -541,6 +541,176 @@ gyte-translate --from en --to it   "Git-GitHub-CrashCourse.en.sentences.txt"
 
 ---
 
+### 📦 Output filesystem & Manifest API
+
+`gyte-explain` produce un output strutturato su filesystem.
+Questa struttura è **stabile e pensata come API** per script, tooling e post-processing automatico.
+
+#### Struttura generale
+
+```text
+out/
+└── gyte-explain-YYYYMMDD-HHMMSS/
+    ├── manifest.json              # RUN manifest
+    └── items/
+        └── 001/
+            ├── manifest.json      # ITEM manifest
+            ├── title.txt
+            ├── url.txt
+            ├── langs.txt
+            ├── row.tsv
+            ├── transcript.txt     # se disponibile
+            ├── summary.txt        # se generato
+            └── transcript_error.txt  # in caso di errore
+```
+
+---
+
+#### RUN manifest — `out/<run>/manifest.json`
+
+Contiene:
+
+* metadati della run
+* configurazione risolta
+* lista item processati
+* conteggi aggregati
+
+Esempio (ridotto):
+
+```json
+{
+  "schema": "gyte.manifest.run.v1",
+  "gyte_version": "v1.1.0",
+  "run": {
+    "id": "gyte-explain-20260203-124339",
+    "status": "ok"
+  },
+  "config": {
+    "ai_mode": "local",
+    "langs": ["it", "en"],
+    "argv": ["gyte-explain", "1", "--ai", "local"]
+  },
+  "counts": {
+    "items_total": 1,
+    "items_ok": 1,
+    "items_error": 0
+  },
+  "items": {
+    "001": {
+      "status": "ok",
+      "path": "items/001/manifest.json"
+    }
+  }
+}
+```
+
+---
+
+#### ITEM manifest — `out/<run>/items/<ID>/manifest.json`
+
+È **sempre scritto**, anche in caso di errore.
+
+Campi chiave:
+
+* `status`: `ok | no_transcript | invalid_url | error`
+* `transcript_source`: `subs | whisper | none`
+* `summary_source`: `local | openai | none`
+* `error_message`: stringa o `null`
+* `paths`: percorsi relativi agli artefatti
+* `meta.exists`: presenza reale dei file su disco
+
+Esempio (errore URL):
+
+```json
+{
+  "schema": "gyte.manifest.item.v1",
+  "id": "001",
+  "status": "invalid_url",
+  "transcript_source": "none",
+  "summary_source": "none",
+  "error_message": "invalid url",
+  "paths": {
+    "title": "title.txt",
+    "url": "url.txt",
+    "transcript_error": "transcript_error.txt"
+  }
+}
+```
+
+👉 **Garanzia**: tool esterni possono fidarsi del manifest senza dover inferire stato dai file.
+
+---
+
+# 2️⃣ RELEASE NOTES — `v1.1.0`
+
+👉 da usare per GitHub Release / tag message
+
+### ✨ v1.1.0 — Manifest API & determinismo
+
+**Novità principali**
+
+* Aggiunto `manifest.json` **sempre scritto**:
+
+  * uno per RUN
+  * uno per ogni ITEM
+* Manifest progettati come **API stabile su filesystem**
+* Stato esplicito per ogni item:
+
+  * `ok`
+  * `no_transcript`
+  * `invalid_url`
+  * `error`
+* Tracciamento sorgenti:
+
+  * transcript: `subs | whisper | none`
+  * summary: `local | openai | none`
+* `argv` serializzato come **lista di token** (non stringa)
+* `gyte_version` risolta automaticamente:
+
+  * file `VERSION` → `git describe` → `UNKNOWN`
+
+**Garanzie**
+
+* Nessun cambiamento a:
+
+  * stdout
+  * stderr
+  * exit code
+* Nessuna dipendenza aggiuntiva (solo bash + python stdlib)
+
+**Perché conta**
+
+* GYTE ora è **script-friendly**, automabile e introspezionabile
+* Il filesystem diventa una API affidabile, non un effetto collaterale
+
+---
+
+# 3️⃣ RELEASE_CHECKLIST_v1.1.0 — append
+
+👉 da aggiungere in `docs/RELEASE_CHECKLIST_v1.0.md` oppure nuova v1.1
+
+### ✔ Manifest API
+
+* [ ] `out/<run>/manifest.json` creato sempre
+* [ ] `out/<run>/items/<id>/manifest.json` creato sempre
+* [ ] Caso `rc=0`:
+
+  * status `ok`
+  * transcript_source `subs|whisper`
+  * summary_source coerente
+* [ ] Caso `rc=2`:
+
+  * status `invalid_url`
+  * `error_message` valorizzato
+* [ ] Caso `rc=3`:
+
+  * status `no_transcript`
+  * `error_message = null`
+* [ ] `argv` nel RUN manifest è una **lista**
+* [ ] `gyte_version` valorizzato (git / VERSION / UNKNOWN)
+
+---
+
 ## Modulo AI esterno – `gyte-translate`
 
 `gyte-translate` non contiene nessuna logica di AI “interna`: si limita a prendere un file di testo e a passarlo a un comando esterno che legge da `stdin` e scrive il risultato su `stdout`.
