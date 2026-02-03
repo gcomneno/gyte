@@ -1,6 +1,359 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PROG="gyte-lint"
+
+usage() {
+  cat <<EOF
+Uso:
+  $PROG
+    - Esegue shellcheck su scripts/gyte-* (default).
+
+  $PROG --manifest [PATH]
+    - Valida manifest RUN/ITEM (stdlib only, niente jsonschema).
+    - Se PATH non è fornito: usa l'ultimo out/gyte-explain-*.
+
+PATH può essere:
+  - directory run: out/gyte-explain-YYYYMMDD-HHMMSS
+  - file manifest:  .../manifest.json  (run o item)
+
+Exit codes:
+  0 = OK
+  2 = errori di validazione
+  1 = errore operativo (file mancante, json invalido, ecc.)
+EOF
+}
+
+pick_latest_run() {
+  local base="out"
+  [[ -d "$base" ]] || return 1
+
+  # find newest by mtime (no ls -t)
+  local line
+  line="$(
+    find "$base" -maxdepth 1 -mindepth 1 -type d -name 'gyte-explain-*' -printf '%T@ %p\n' 2>/dev/null \
+      | sort -nr \
+      | head -n 1 \
+      || true
+  )"
+  [[ -n "$line" ]] || return 1
+  echo "${line#* }"
+}
+
+validate_manifest() {
+  local target="${1:-}"
+  if [[ -z "$target" ]]; then
+    target="$(pick_latest_run || true)"
+    if [[ -z "$target" ]]; then
+      echo "ERRORE: nessuna run trovata (atteso out/gyte-explain-*)" >&2
+      return 1
+    fi
+  fi
+
+  local path="$target"
+  if [[ -d "$path" ]]; then
+    if [[ -f "$path/manifest.json" ]]; then
+      path="$path/manifest.json"
+    else
+      echo "ERRORE: directory senza manifest.json: $target" >&2
+      return 1
+    fi
+  fi
+
+  if [[ ! -f "$path" ]]; then
+    echo "ERRORE: file non trovato: $path" >&2
+    return 1
+  fi
+
+  python3 - "$path" <<'PY'
+import json, os, sys
+
+path = sys.argv[1]
+
+ERRORS = 0
+WARNINGS = 0
+
+def err(msg):
+    global ERRORS
+    ERRORS += 1
+    print(f"[ERR] {msg}", file=sys.stderr)
+
+def warn(msg):
+    global WARNINGS
+    WARNINGS += 1
+    print(f"[WARN] {msg}", file=sys.stderr)
+
+def is_str(x): return isinstance(x, str)
+def is_bool(x): return isinstance(x, bool)
+def is_int(x): return isinstance(x, int) and x >= 0
+def is_dict(x): return isinstance(x, dict)
+def is_list(x): return isinstance(x, list)
+
+def load_json(p):
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        err(f"missing file: {p}")
+        return None
+    except json.JSONDecodeError as e:
+        err(f"invalid json: {p}: {e}")
+        return None
+    except Exception as e:
+        err(f"cannot read json: {p}: {e}")
+        return None
+
+def validate_item_manifest(doc, item_path):
+    if doc.get("schema") != "gyte.manifest.item.v1":
+        err(f"item schema mismatch in {item_path} (got {doc.get('schema')!r})")
+        return
+
+    req = ["id","title","url","langs","ai_mode","transcript_source","summary_source","status","error_message","paths","timestamps","meta"]
+    for k in req:
+        if k not in doc:
+            err(f"item missing key '{k}' in {item_path}")
+
+    if "id" in doc and not is_str(doc["id"]):
+        err(f"item.id must be string in {item_path}")
+    if "title" in doc and not is_str(doc["title"]):
+        err(f"item.title must be string in {item_path}")
+    if "url" in doc and not is_str(doc["url"]):
+        err(f"item.url must be string in {item_path}")
+
+    if "langs" in doc:
+        if not is_list(doc["langs"]) or not all(is_str(x) for x in doc["langs"]):
+            err(f"item.langs must be array[str] in {item_path}")
+
+    ai_mode = doc.get("ai_mode")
+    if ai_mode not in ("local","openai","whisper","off"):
+        err(f"item.ai_mode invalid in {item_path}: {ai_mode!r}")
+
+    tsrc = doc.get("transcript_source")
+    if tsrc not in ("subs","whisper","none"):
+        err(f"item.transcript_source invalid in {item_path}: {tsrc!r}")
+
+    ssrc = doc.get("summary_source")
+    if ssrc not in ("local","openai","none"):
+        err(f"item.summary_source invalid in {item_path}: {ssrc!r}")
+
+    status = doc.get("status")
+    if status not in ("ok","no_transcript","invalid_url","error"):
+        err(f"item.status invalid in {item_path}: {status!r}")
+
+    if "error_message" in doc:
+        em = doc["error_message"]
+        if em is not None and not is_str(em):
+            err(f"item.error_message must be string|null in {item_path}")
+
+    paths = doc.get("paths")
+    if not is_dict(paths):
+        err(f"item.paths must be object in {item_path}")
+        paths = {}
+    else:
+        for k, v in paths.items():
+            if not is_str(v):
+                err(f"item.paths[{k!r}] must be string in {item_path}")
+            else:
+                if os.path.isabs(v):
+                    err(f"item.paths[{k!r}] must be relative, got absolute in {item_path}: {v}")
+                if ".." in v.split("/"):
+                    err(f"item.paths[{k!r}] must not contain '..' in {item_path}: {v}")
+
+    ts = doc.get("timestamps")
+    if not is_dict(ts):
+        err(f"item.timestamps must be object in {item_path}")
+    else:
+        for k in ("created","updated"):
+            if k not in ts:
+                err(f"item.timestamps missing '{k}' in {item_path}")
+            elif not is_str(ts[k]):
+                err(f"item.timestamps.{k} must be string in {item_path}")
+
+    meta = doc.get("meta")
+    if not is_dict(meta):
+        err(f"item.meta must be object in {item_path}")
+        meta = {}
+    else:
+        ex = meta.get("exists")
+        if ex is not None:
+            if not is_dict(ex) or not all(is_bool(v) for v in ex.values()):
+                err(f"item.meta.exists must be object[str->bool] in {item_path}")
+        for k in ("reflowed_transcript","stdout_summary_emitted"):
+            if k in meta and not is_bool(meta[k]):
+                err(f"item.meta.{k} must be bool in {item_path}")
+
+    item_dir = os.path.dirname(item_path)
+    def exists(rel):
+        if not rel: return False
+        return os.path.exists(os.path.join(item_dir, rel))
+
+    if status == "ok":
+        if tsrc == "none":
+            warn(f"item.status=ok but transcript_source=none in {item_path}")
+        tr = paths.get("transcript")
+        if tr and not exists(tr):
+            warn(f"item.status=ok but transcript file missing in {item_path}: {tr}")
+    if status == "invalid_url":
+        if ssrc != "none":
+            warn(f"item.status=invalid_url but summary_source != none in {item_path}")
+        if tsrc != "none":
+            warn(f"item.status=invalid_url but transcript_source != none in {item_path}")
+        if doc.get("error_message") in (None,""):
+            warn(f"item.status=invalid_url but error_message empty in {item_path}")
+    if status == "no_transcript":
+        if tsrc != "none":
+            warn(f"item.status=no_transcript but transcript_source != none in {item_path}")
+        if ssrc != "none":
+            warn(f"item.status=no_transcript but summary_source != none in {item_path}")
+    if ai_mode == "off" and ssrc != "none":
+        warn(f"item.ai_mode=off but summary_source != none in {item_path}")
+
+def validate_run_manifest(doc, run_manifest_path):
+    if doc.get("schema") != "gyte.manifest.run.v1":
+        err(f"run schema mismatch in {run_manifest_path} (got {doc.get('schema')!r})")
+        return
+
+    req = ["gyte_version","run","config","counts","items","paths","notes"]
+    for k in req:
+        if k not in doc:
+            err(f"run missing key '{k}' in {run_manifest_path}")
+
+    if "gyte_version" in doc and not is_str(doc["gyte_version"]):
+        err(f"run.gyte_version must be string in {run_manifest_path}")
+
+    run = doc.get("run")
+    if not is_dict(run):
+        err(f"run.run must be object in {run_manifest_path}")
+        run = {}
+    else:
+        for k in ("id","dir","timestamp_start","timestamp_end","status"):
+            if k not in run:
+                err(f"run.run missing '{k}' in {run_manifest_path}")
+            elif k != "status" and not is_str(run[k]):
+                err(f"run.run.{k} must be string in {run_manifest_path}")
+        st = run.get("status")
+        if st not in ("ok","error"):
+            err(f"run.run.status invalid in {run_manifest_path}: {st!r}")
+
+    cfg = doc.get("config")
+    if not is_dict(cfg):
+        err(f"run.config must be object in {run_manifest_path}")
+        cfg = {}
+    else:
+        if cfg.get("ai_mode") not in ("local","openai","whisper","off"):
+            err(f"run.config.ai_mode invalid in {run_manifest_path}: {cfg.get('ai_mode')!r}")
+        langs = cfg.get("langs")
+        if not is_list(langs) or not all(is_str(x) for x in langs):
+            err(f"run.config.langs must be array[str] in {run_manifest_path}")
+        argv = cfg.get("argv")
+        if not is_list(argv) or not all(is_str(x) for x in argv):
+            err(f"run.config.argv must be array[str] in {run_manifest_path}")
+
+    counts = doc.get("counts")
+    if not is_dict(counts):
+        err(f"run.counts must be object in {run_manifest_path}")
+        counts = {}
+    else:
+        keys = ["items_total","items_ok","items_error","items_no_transcript","items_invalid_url"]
+        for k in keys:
+            if k not in counts:
+                err(f"run.counts missing '{k}' in {run_manifest_path}")
+            elif not is_int(counts[k]):
+                err(f"run.counts.{k} must be int>=0 in {run_manifest_path}")
+
+    items = doc.get("items")
+    if not is_dict(items):
+        err(f"run.items must be object(map) in {run_manifest_path}")
+        items = {}
+
+    if is_dict(counts):
+        total = counts.get("items_total")
+        if isinstance(total, int):
+            if total != len(items):
+                err(f"run.counts.items_total ({total}) != len(items) ({len(items)}) in {run_manifest_path}")
+        s = 0
+        for k in ("items_ok","items_error","items_no_transcript","items_invalid_url"):
+            v = counts.get(k)
+            if isinstance(v, int):
+                s += v
+        if isinstance(total, int) and s != total:
+            err(f"run.counts sum ({s}) != items_total ({total}) in {run_manifest_path}")
+
+        items_error = counts.get("items_error")
+        if isinstance(items_error, int):
+            expected = "error" if items_error > 0 else "ok"
+            actual = (doc.get("run") or {}).get("status")
+            if actual in ("ok","error") and actual != expected:
+                err(f"run.run.status should be {expected!r} (items_error={items_error}) but is {actual!r} in {run_manifest_path}")
+
+    run_dir = os.path.dirname(run_manifest_path)
+    for iid, it in items.items():
+        if not is_str(iid):
+            err(f"run.items key must be string id, got {type(iid).__name__} in {run_manifest_path}")
+            continue
+        if not is_dict(it):
+            err(f"run.items[{iid}] must be object in {run_manifest_path}")
+            continue
+        st = it.get("status")
+        if st not in ("ok","no_transcript","invalid_url","error"):
+            err(f"run.items[{iid}].status invalid in {run_manifest_path}: {st!r}")
+        p = it.get("path")
+        if not is_str(p) or not p:
+            err(f"run.items[{iid}].path must be string in {run_manifest_path}")
+            continue
+        if os.path.isabs(p):
+            err(f"run.items[{iid}].path must be relative in {run_manifest_path}: {p}")
+            continue
+        item_manifest_path = os.path.join(run_dir, p)
+        item_doc = load_json(item_manifest_path)
+        if item_doc is None:
+            continue
+        validate_item_manifest(item_doc, item_manifest_path)
+
+def main():
+    doc = load_json(path)
+    if doc is None:
+        return 1
+
+    schema = doc.get("schema")
+    if schema == "gyte.manifest.run.v1":
+        validate_run_manifest(doc, path)
+    elif schema == "gyte.manifest.item.v1":
+        validate_item_manifest(doc, path)
+    else:
+        err(f"unknown schema in {path}: {schema!r}")
+
+    if ERRORS:
+        print(f"[FAIL] manifest validation failed: errors={ERRORS}, warnings={WARNINGS}", file=sys.stderr)
+        return 2
+    print(f"[OK] manifest validation passed: warnings={WARNINGS}")
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
+PY
+}
+
+if (( $# > 0 )); then
+  case "${1:-}" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --manifest)
+      shift || true
+      validate_manifest "${1:-}"
+      exit $?
+      ;;
+    *)
+      echo "ERRORE: opzione non riconosciuta: $1" >&2
+      usage >&2
+      exit 1
+      ;;
+  esac
+fi
+
+# Default behavior: shellcheck
 if ! command -v shellcheck >/dev/null 2>&1; then
   echo "Errore: shellcheck non trovato nel PATH." >&2
   echo "Ubuntu: sudo apt-get update && sudo apt-get install -y shellcheck" >&2
@@ -11,17 +364,9 @@ shopt -s nullglob
 shell_files=()
 
 is_shell_shebang() {
-  # Riconosce sia shebang diretti (#!/bin/bash) che via env (#!/usr/bin/env bash)
-  # shellcheck disable=SC2001
   local first
   first="$(head -n 1 "$1" 2>/dev/null || true)"
 
-  # Normalizza spazi multipli
-  # Esempi validi:
-  #   #!/bin/bash
-  #   #!/usr/bin/env bash
-  #   #!/usr/bin/env -S bash
-  #   #!/usr/bin/env sh
   echo "$first" | grep -Eq '^#!.*\b(sh|bash|dash|ksh)\b' \
     || echo "$first" | grep -Eq '^#!.*\benv\b.*\b(sh|bash|dash|ksh)\b'
 }
