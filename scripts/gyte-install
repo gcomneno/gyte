@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# GYTE installer: install wrapper commands into ~/.local/bin (default via symlink).
+# Usage:
+#   gyte-install                # symlink wrappers into ~/.local/bin
+#   gyte-install --copy         # copy wrappers into ~/.local/bin
+#   gyte-install --prefix DIR   # install into DIR instead of ~/.local/bin
+#   gyte-install --dry-run      # print actions without changing anything
+#   gyte-install --force        # overwrite non-symlink existing files
+#
+# Notes:
+# - Default mode is symlink (recommended for development).
+# - It installs commands found in <repo>/bin/gyte-* (including gyte-install itself).
+# - It refuses to overwrite unrelated existing files unless --force is provided.
+
+usage() {
+  cat <<'USAGE'
+gyte-install - install GYTE commands into a user-local bin directory
+
+USAGE:
+  gyte-install [--copy] [--prefix DIR] [--dry-run] [--force] [-h|--help]
+
+OPTIONS:
+  --copy         Copy wrappers instead of creating symlinks (default: symlink).
+  --prefix DIR   Install into DIR (default: ~/.local/bin).
+  --dry-run      Show what would be done without making changes.
+  --force        Overwrite existing non-symlink files.
+  -h, --help     Show this help.
+
+EXAMPLES:
+  gyte-install
+  gyte-install --copy
+  gyte-install --prefix "$HOME/bin"
+  gyte-install --dry-run
+USAGE
+}
+
+say() { printf '%s\n' "$*"; }
+err() { printf 'ERROR: %s\n' "$*" >&2; }
+
+# --- args ---
+MODE="symlink"           # or "copy"
+PREFIX="${HOME}/.local/bin"
+DRY_RUN=0
+FORCE=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --copy) MODE="copy"; shift ;;
+    --prefix)
+      [[ $# -ge 2 ]] || { err "--prefix requires a directory"; exit 2; }
+      PREFIX="$2"; shift 2 ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    --force) FORCE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      err "Unknown argument: $1"
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+# --- resolve repo root from this script location ---
+# scripts/gyte-install -> <repo>/scripts/gyte-install -> repo root is parent of scripts/
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
+WRAPPERS_DIR="${REPO_ROOT}/bin"
+
+[[ -d "${WRAPPERS_DIR}" ]] || { err "Wrappers directory not found: ${WRAPPERS_DIR}"; exit 2; }
+
+# Collect wrappers
+shopt -s nullglob
+WRAPPERS=( "${WRAPPERS_DIR}"/gyte-* )
+shopt -u nullglob
+
+if [[ ${#WRAPPERS[@]} -eq 0 ]]; then
+  err "No wrappers found in ${WRAPPERS_DIR} (expected bin/gyte-*)"
+  exit 2
+fi
+
+# Ensure prefix exists
+if [[ ! -d "${PREFIX}" ]]; then
+  if [[ ${DRY_RUN} -eq 1 ]]; then
+    say "[dry-run] mkdir -p \"${PREFIX}\""
+  else
+    mkdir -p -- "${PREFIX}"
+  fi
+fi
+
+# Helper: check if dest exists and is "safe" to overwrite
+is_safe_to_overwrite() {
+  local dest="$1"
+  local src="$2"
+
+  if [[ ! -e "${dest}" && ! -L "${dest}" ]]; then
+    return 0
+  fi
+
+  # If dest is a symlink, it's safe to replace if it points into this repo,
+  # or if --force is set.
+  if [[ -L "${dest}" ]]; then
+    local resolved=""
+    if resolved="$(readlink -f -- "${dest}" 2>/dev/null)"; then
+      case "${resolved}" in
+        "${REPO_ROOT}"/*) return 0 ;;
+        *) [[ ${FORCE} -eq 1 ]] && return 0 || return 1 ;;
+      esac
+    fi
+    # If we can't resolve, require --force
+    [[ ${FORCE} -eq 1 ]] && return 0 || return 1
+  fi
+
+  # Non-symlink file/dir: only overwrite with --force
+  [[ ${FORCE} -eq 1 ]] && return 0 || return 1
+}
+
+do_link() {
+  local src="$1"
+  local dest="$2"
+
+  if ! is_safe_to_overwrite "${dest}" "${src}"; then
+    err "Refusing to overwrite existing: ${dest} (use --force if you're sure)"
+    return 1
+  fi
+
+  if [[ ${DRY_RUN} -eq 1 ]]; then
+    say "[dry-run] ln -sfn \"${src}\" \"${dest}\""
+  else
+    ln -sfn -- "${src}" "${dest}"
+  fi
+}
+
+do_copy() {
+  local src="$1"
+  local dest="$2"
+
+  if ! is_safe_to_overwrite "${dest}" "${src}"; then
+    err "Refusing to overwrite existing: ${dest} (use --force if you're sure)"
+    return 1
+  fi
+
+  if [[ ${DRY_RUN} -eq 1 ]]; then
+    say "[dry-run] install -m 0755 \"${src}\" \"${dest}\""
+  else
+    # install sets permissions atomically
+    install -m 0755 -- "${src}" "${dest}"
+  fi
+}
+
+say "GYTE install"
+say "  repo:    ${REPO_ROOT}"
+say "  mode:    ${MODE}"
+say "  prefix:  ${PREFIX}"
+if [[ ${DRY_RUN} -eq 1 ]]; then
+  say "  dry-run: yes"
+fi
+
+FAIL=0
+COUNT=0
+
+for src in "${WRAPPERS[@]}"; do
+  name="$(basename -- "${src}")"
+  dest="${PREFIX}/${name}"
+
+  # Sanity: skip non-regular files
+  if [[ ! -f "${src}" ]]; then
+    err "Skipping non-file wrapper: ${src}"
+    continue
+  fi
+
+  if [[ "${MODE}" == "copy" ]]; then
+    if ! do_copy "${src}" "${dest}"; then FAIL=1; else COUNT=$((COUNT+1)); fi
+  else
+    if ! do_link "${src}" "${dest}"; then FAIL=1; else COUNT=$((COUNT+1)); fi
+  fi
+done
+
+say "Installed ${COUNT} command(s) into ${PREFIX}"
+
+# PATH hint
+case ":${PATH}:" in
+  *":${PREFIX}:"*)
+    ;;
+  *)
+    say ""
+    say "NOTE: ${PREFIX} is not in your PATH."
+    say "Add this line to ~/.profile (or ~/.bashrc) and restart the shell:"
+    say "  export PATH=\"${HOME}/.local/bin:\$PATH\""
+    ;;
+esac
+
+if [[ ${FAIL} -ne 0 ]]; then
+  err "Some items failed. See errors above."
+  exit 1
+fi
+
+exit 0

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# GYTE bin wrapper: delegates to ../scripts/<same-name> preserving stdout/stderr/exit-code.
 SELF="$(basename "$0")"
-ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+SELF_REAL="$(readlink -f -- "${BASH_SOURCE[0]}")"
+ROOT="$(cd -- "$(dirname -- "$SELF_REAL")/.." && pwd -P)"
 TARGET="$ROOT/scripts/$SELF"
 
 if [[ ! -x "$TARGET" ]]; then
