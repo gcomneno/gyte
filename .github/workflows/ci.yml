@@ -13,13 +13,13 @@ permissions:
 
 jobs:
   lint-shell:
-    name: Shellcheck scripts
+    name: Shellcheck + smoke (deterministic)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v5
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -56,6 +56,12 @@ jobs:
 
           shellcheck "${shell_files[@]}"
 
+      - name: Smoke test (offline / deterministic)
+        run: |
+          set -euo pipefail
+          chmod +x tests/smoke.sh
+          ./tests/smoke.sh
+
       - name: pip-audit (optional AI deps)
         run: |
           set -euo pipefail
@@ -73,31 +79,3 @@ jobs:
           if ! pip-audit -r requirements-optional.txt; then
             echo "pip-audit ha trovato problemi, ma non blocco la CI (soft mode)."
           fi
-
-  yt-dlp-dry-run:
-    name: yt-dlp dry-run (metadata only)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-
-      - name: Install yt-dlp (via pip)
-        run: |
-          set -euo pipefail
-          python3 -m pip install --upgrade pip
-          python3 -m pip install yt-dlp
-
-      - name: yt-dlp metadata dry-run
-        env:
-          TEST_URL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-        run: |
-          set -euo pipefail
-          echo ">> Verifico che yt-dlp funzioni in modalità solo metadata..."
-          yt-dlp --skip-download --print "%(title)s" --simulate "$TEST_URL"
