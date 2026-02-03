@@ -4,211 +4,199 @@ set -euo pipefail
 # Uso:
 #   gyte-whisper-local [--model MODEL] [--lang LANG] [--outdir DIR] FILE
 #
-# Backend:
-#   - Preferisce automaticamente faster-whisper (se installato) -> veloce CPU int8
-#   - Altrimenti usa openai-whisper CLI (comando "whisper") se presente
-#   - Oppure whisper.cpp se configuri GYTE_STT_BIN e un model path .bin
+# Scopo:
+# - Trascrizione locale con whisper.cpp / faster-whisper / whisper (a seconda del tuo setup)
+# - Output: file .txt nella outdir (o stessa dir), nome derivato da input
 #
-# Env:
-#   GYTE_WHISPER_MODEL    default: "base"   (tiny|base|small|medium|large-v3 ...)
-#   GYTE_WHISPER_LANG     default: "auto"   (it/en/... oppure auto)
-#   GYTE_OUTDIR           outdir di default
-#   GYTE_STT_BIN          forza un binario STT specifico (es: whisper, whisper.cpp)
-#   GYTE_WHISPER_BACKEND  forza backend: auto|faster-whisper|whisper-cli|whisper-cpp
-#   GYTE_WHISPER_DEVICE   (faster-whisper) default: cpu
-#   GYTE_WHISPER_COMPUTE  (faster-whisper) default: int8
+# Nota:
+# - Script "optional": dipendenze pesanti NON obbligatorie per GYTE base.
+
+PROG="gyte-whisper-local"
+
+MODEL="${GYTE_WHISPER_MODEL:-}"
+LANG="${GYTE_WHISPER_LANG:-}"
+OUTDIR="${GYTE_OUTDIR:-}"
+BACKEND="${GYTE_WHISPER_BACKEND:-auto}"  # auto|whispercpp|faster|openai|unknown
 
 usage() {
-  cat >&2 <<'EOF'
+  cat <<EOF
 Uso:
-  gyte-whisper-local [--model MODEL] [--lang LANG] [--outdir DIR] FILE
+  $PROG [--model MODEL] [--lang LANG] [--outdir DIR] FILE
 
 Opzioni:
-  --model MODEL     Modello (default: $GYTE_WHISPER_MODEL o "base")
-  --lang LANG       Lingua (default: $GYTE_WHISPER_LANG o "auto")
-  --language LANG   Alias di --lang
-  --outdir DIR      Directory output (default: $GYTE_OUTDIR o cwd)
-  -h, --help        Help
-
-Env:
-  GYTE_WHISPER_MODEL     default model (es: tiny|base|small|medium|large-v3...)
-  GYTE_WHISPER_LANG      lingua (es. en/it/fr) o "auto"
-  GYTE_OUTDIR            outdir di default
-  GYTE_STT_BIN           binario STT (es: whisper / whisper.cpp)
-  GYTE_WHISPER_BACKEND   auto|faster-whisper|whisper-cli|whisper-cpp
-  GYTE_WHISPER_DEVICE    (faster-whisper) cpu|cuda (default: cpu)
-  GYTE_WHISPER_COMPUTE   (faster-whisper) int8|int8_float16|float16|float32 (default: int8)
+  --model MODEL   modello whisper (dipende dal backend)
+  --lang  LANG    lingua (es: it, en) (opzionale)
+  --outdir DIR    directory output (default: stessa dir del file)
+  --backend B     auto|whispercpp|faster|openai (default: auto)
+  -h, --help      help
 EOF
 }
 
-MODEL="${GYTE_WHISPER_MODEL:-base}"
-LANG="${GYTE_WHISPER_LANG:-auto}"
-OUTDIR="${GYTE_OUTDIR:-}"
-STT_BIN="${GYTE_STT_BIN:-}"
-BACKEND_FORCE="${GYTE_WHISPER_BACKEND:-auto}"
-FW_DEVICE="${GYTE_WHISPER_DEVICE:-cpu}"
-FW_COMPUTE="${GYTE_WHISPER_COMPUTE:-int8}"
+die(){ echo "ERRORE: $*" >&2; exit 2; }
+need(){ command -v "$1" >/dev/null 2>&1 || die "comando richiesto non trovato: $1"; }
 
 # Parse args
-while [ $# -gt 0 ]; do
+while (( $# > 0 )); do
   case "$1" in
-    -h|--help) usage; exit 0 ;;
-    --model) [ $# -ge 2 ] || { echo "Errore: --model richiede un argomento" >&2; exit 2; }; MODEL="$2"; shift 2 ;;
-    --model=*) MODEL="${1#--model=}"; shift ;;
-    --lang|--language) [ $# -ge 2 ] || { echo "Errore: $1 richiede un argomento" >&2; exit 2; }; LANG="$2"; shift 2 ;;
-    --lang=*|--language=*) LANG="${1#*=}"; shift ;;
-    --outdir) [ $# -ge 2 ] || { echo "Errore: --outdir richiede un argomento" >&2; exit 2; }; OUTDIR="$2"; shift 2 ;;
-    --outdir=*) OUTDIR="${1#--outdir=}"; shift ;;
-    --) shift; break ;;
-    -*) echo "Errore: opzione non riconosciuta: $1" >&2; usage; exit 2 ;;
-    *) break ;;
+    --model)
+      (( $#>=2 )) || die "--model richiede MODEL"
+      MODEL="$2"
+      shift 2
+      ;;
+    --model=*)
+      MODEL="${1#*=}"
+      shift
+      ;;
+    --lang)
+      (( $#>=2 )) || die "--lang richiede LANG"
+      LANG="$2"
+      shift 2
+      ;;
+    --lang=*)
+      LANG="${1#*=}"
+      shift
+      ;;
+    --outdir)
+      (( $#>=2 )) || die "--outdir richiede DIR"
+      OUTDIR="$2"
+      shift 2
+      ;;
+    --outdir=*)
+      OUTDIR="${1#*=}"
+      shift
+      ;;
+    --backend)
+      (( $#>=2 )) || die "--backend richiede VALORE"
+      BACKEND="$2"
+      shift 2
+      ;;
+    --backend=*)
+      BACKEND="${1#*=}"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      break
+      ;;
   esac
 done
 
-if [ $# -lt 1 ]; then
-  echo "Errore: manca il FILE di input." >&2
-  usage
-  exit 1
+FILE="${1:-}"
+[[ -n "$FILE" ]] || { usage; exit 2; }
+[[ -f "$FILE" ]] || die "file non trovato: $FILE"
+
+if [[ -z "$OUTDIR" ]]; then
+  OUTDIR="$(cd -- "$(dirname -- "$FILE")" && pwd)"
 fi
-
-INPUT="$1"
-[ -n "$INPUT" ] || { echo "Errore: FILE di input vuoto." >&2; exit 1; }
-[[ "$INPUT" != -* ]] || { echo "Errore: il percorso del FILE non può iniziare con '-'." >&2; exit 1; }
-[ -f "$INPUT" ] || { echo "Errore: file non trovato: $INPUT" >&2; exit 1; }
-
-# Outdir default = cwd se non specificato
-[ -n "$OUTDIR" ] || OUTDIR="."
-[[ "$OUTDIR" != -* ]] || { echo "Errore: OUTDIR non può iniziare con '-'." >&2; exit 1; }
 mkdir -p -- "$OUTDIR"
 
-BASENAME="$(basename -- "$INPUT")"
-BASENAME_NOEXT="${BASENAME%.*}"
-OUT_TXT="$OUTDIR/$BASENAME_NOEXT.txt"
+base="$(basename -- "$FILE")"
+stem="${base%.*}"
+OUT_TXT="$OUTDIR/$stem.txt"
 
-# ---- backend detect helpers ----
-has_faster_whisper() {
-  python3 - <<'PY' >/dev/null 2>&1
-import importlib
-importlib.import_module("faster_whisper")
-PY
-}
+# Backend discovery (best-effort)
+STT_BIN=""
 
-# Decide backend
-BACKEND="auto"
-case "$BACKEND_FORCE" in
-  auto|faster-whisper|whisper-cli|whisper-cpp) BACKEND="$BACKEND_FORCE" ;;
-  *) echo "Errore: GYTE_WHISPER_BACKEND non valido: $BACKEND_FORCE" >&2; exit 2 ;;
-esac
-
-if [ "$BACKEND" = "auto" ]; then
-  if has_faster_whisper; then
-    BACKEND="faster-whisper"
-  elif command -v whisper >/dev/null 2>&1; then
-    BACKEND="whisper-cli"
-    STT_BIN="whisper"
-  elif [ -n "$STT_BIN" ]; then
-    # se l'utente l'ha forzato
-    : # deciso dopo
-  else
-    BACKEND="unknown"
-  fi
+if command -v whisper.cpp >/dev/null 2>&1; then
+  STT_BIN="whisper.cpp"
+elif command -v whisper-cpp >/dev/null 2>&1; then
+  STT_BIN="whisper-cpp"
+elif command -v faster-whisper >/dev/null 2>&1; then
+  STT_BIN="faster-whisper"
+elif command -v whisper >/dev/null 2>&1; then
+  STT_BIN="whisper"
 fi
 
-# Se l'utente ha forzato STT_BIN, prova a capire se è whisper-cli o whisper-cpp
-if [ -n "$STT_BIN" ] && [ "$BACKEND" = "auto" -o "$BACKEND" = "unknown" ]; then
-  if ! command -v "$STT_BIN" >/dev/null 2>&1; then
-    echo "Errore: STT binario non trovato nel PATH: $STT_BIN" >&2
-    exit 1
-  fi
-  HELP_OUT="$("$STT_BIN" --help 2>&1 || true)"
-  if echo "$HELP_OUT" | grep -q -- '--output_dir' && echo "$HELP_OUT" | grep -q -- '--output_format'; then
-    BACKEND="whisper-cli"
-  elif echo "$HELP_OUT" | grep -q -- '-osrt' || echo "$HELP_OUT" | grep -q -- '-otxt'; then
-    BACKEND="whisper-cpp"
-  else
-    BACKEND="unknown"
-  fi
+# FIX SC2166: no [ p -o q ]
+if [ -n "$STT_BIN" ] && { [ "$BACKEND" = "auto" ] || [ "$BACKEND" = "unknown" ]; }; then
+  case "$STT_BIN" in
+    whisper.cpp|whisper-cpp)
+      BACKEND="whispercpp"
+      ;;
+    faster-whisper)
+      BACKEND="faster"
+      ;;
+    whisper)
+      BACKEND="openai"
+      ;;
+    *)
+      BACKEND="unknown"
+      ;;
+  esac
 fi
-
-echo ">> gyte-whisper-local"
-echo "   input   : $INPUT"
-echo "   outdir  : $OUTDIR"
-echo "   model   : $MODEL"
-echo "   lang    : $LANG"
-echo "   backend : $BACKEND"
-[ -n "$STT_BIN" ] && echo "   stt_bin : $STT_BIN"
-echo
 
 case "$BACKEND" in
-  faster-whisper)
-    # Produce SOLO TXT (che basta a gyte-digest)
-    export GYTE_INP="$INPUT"
-    export GYTE_OUT="$OUT_TXT"
-    export GYTE_MODEL="$MODEL"
-    export GYTE_LANG="$LANG"
-    export GYTE_DEV="$FW_DEVICE"
-    export GYTE_CT="$FW_COMPUTE"
-    python3 - <<'PY'
-import os, sys
-from faster_whisper import WhisperModel
-
-inp   = os.environ.get("GYTE_INP")
-out   = os.environ.get("GYTE_OUT")
-model = os.environ.get("GYTE_MODEL")
-lang  = os.environ.get("GYTE_LANG")
-dev   = os.environ.get("GYTE_DEV","cpu")
-ct    = os.environ.get("GYTE_CT","int8")
-
-m = WhisperModel(model, device=dev, compute_type=ct)
-language = None if (not lang or lang == "auto") else lang
-
-segments, info = m.transcribe(inp, language=language, vad_filter=True)
-
-parts = []
-for s in segments:
-  t = (s.text or "").strip()
-  if t:
-    parts.append(t)
-
-text = "\n".join(parts).strip() + ("\n" if parts else "")
-with open(out, "w", encoding="utf-8") as f:
-  f.write(text)
-
-print(f"   detected_lang: {info.language} prob={getattr(info,'language_probability',None)}", file=sys.stderr)
-PY
-    ;;
-  whisper-cli)
-    # openai-whisper CLI: --output_format accetta UN SOLO valore, quindi usiamo "txt"
-    : "${STT_BIN:=whisper}"
-    whisper_args=("$INPUT" --model "$MODEL" --output_dir "$OUTDIR" --output_format "txt")
-    if [ -n "$LANG" ] && [ "$LANG" != "auto" ]; then
-      whisper_args+=( --language "$LANG" )
-    fi
-    "$STT_BIN" "${whisper_args[@]}" >/dev/null
-    ;;
-  whisper-cpp)
-    # whisper.cpp richiede model path .bin
-    [ -n "$STT_BIN" ] || { echo "Errore: per whisper-cpp devi impostare GYTE_STT_BIN" >&2; exit 1; }
-    if [[ "$MODEL" != *.* && "$MODEL" != */* ]]; then
-      echo "Errore: sembra whisper.cpp, ma --model non è un path (.bin)." >&2
-      echo "Imposta un path modello, es: export GYTE_WHISPER_MODEL=./models/ggml-base.bin" >&2
-      exit 1
-    fi
-    cpp_args=( -m "$MODEL" -f "$INPUT" -of "$OUTDIR/$BASENAME_NOEXT" -otxt )
-    if [ -n "$LANG" ] && [ "$LANG" != "auto" ]; then
-      cpp_args+=( -l "$LANG" )
-    else
-      cpp_args+=( -l auto )
-    fi
-    "$STT_BIN" "${cpp_args[@]}" >/dev/null
+  whispercpp|faster|openai|auto|unknown)
     ;;
   *)
-    echo "Errore: nessun backend STT disponibile." >&2
-    echo "Suggerimento: installa faster-whisper oppure openai-whisper (CLI 'whisper'), o configura whisper.cpp." >&2
-    exit 1
+    die "--backend non valido: $BACKEND"
     ;;
 esac
 
-# Export vars for faster-whisper python snippet
-# (fatto dopo lo switch perché ci servono solo lì)
-true
+# Defaults (backend-specific)
+if [[ -z "$MODEL" ]]; then
+  # model naming differs; keep empty -> backend default
+  MODEL=""
+fi
+
+# Se abbiamo un backend “vero”, STT_BIN deve esistere.
+case "$BACKEND" in
+  whispercpp|faster|openai)
+    [[ -n "$STT_BIN" ]] || die "backend '$BACKEND' richiesto ma nessun binario STT trovato nel PATH"
+    need "$STT_BIN"
+    ;;
+esac
+
+# Execute
+case "$BACKEND" in
+  whispercpp)
+    # Typical whisper.cpp CLI:
+    #   whisper.cpp -m model.bin -f input -l it -otxt -of outprefix
+    OUT_PREFIX="$OUTDIR/$stem"
+    args=()
+    if [[ -n "$MODEL" ]]; then
+      args+=(-m "$MODEL")
+    fi
+    args+=(-f "$FILE" -otxt -of "$OUT_PREFIX")
+    if [[ -n "$LANG" ]]; then
+      args+=(-l "$LANG")
+    fi
+    "$STT_BIN" "${args[@]}" >/dev/null
+    # whisper.cpp typically outputs OUT_PREFIX.txt
+    [[ -s "${OUT_PREFIX}.txt" ]] || die "output mancante o vuoto: ${OUT_PREFIX}.txt"
+    mv -f "${OUT_PREFIX}.txt" "$OUT_TXT"
+    ;;
+  faster)
+    args=("$FILE" "--output_dir" "$OUTDIR" "--output_format" "txt")
+    if [[ -n "$MODEL" ]]; then
+      args+=("--model" "$MODEL")
+    fi
+    if [[ -n "$LANG" ]]; then
+      args+=("--language" "$LANG")
+    fi
+    "$STT_BIN" "${args[@]}" >/dev/null
+    # faster-whisper outputs "$stem.txt" in OUTDIR
+    [[ -s "$OUT_TXT" ]] || die "output mancante o vuoto: $OUT_TXT"
+    ;;
+  openai)
+    # If user has python openai-whisper installed and uses "whisper" CLI.
+    args=("$FILE" "--output_dir" "$OUTDIR" "--output_format" "txt")
+    if [[ -n "$MODEL" ]]; then
+      args+=("--model" "$MODEL")
+    fi
+    if [[ -n "$LANG" ]]; then
+      args+=("--language" "$LANG")
+    fi
+    "$STT_BIN" "${args[@]}" >/dev/null
+    [[ -s "$OUT_TXT" ]] || die "output mancante o vuoto: $OUT_TXT"
+    ;;
+  auto|unknown)
+    die "backend non determinato (nessun whisper trovato nel PATH). Installa whisper.cpp o faster-whisper."
+    ;;
+esac
+
+# Output path on stdout (useful for chaining)
+echo "$OUT_TXT"

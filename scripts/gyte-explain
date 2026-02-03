@@ -62,7 +62,11 @@ elif [[ -f "./lib/gyte-manifest.sh" ]]; then
 fi
 
 ts(){ date '+%Y-%m-%d %H:%M:%S'; }
-log(){ (( VERBOSE )) && echo "[$PROG] $(ts) $*" >&2 || true; }
+log(){
+  if (( VERBOSE )); then
+    echo "[$PROG] $(ts) $*" >&2
+  fi
+}
 die(){ echo "ERRORE: $*" >&2; exit 2; }
 
 need(){ command -v "$1" >/dev/null 2>&1 || die "comando richiesto non trovato: $1"; }
@@ -129,11 +133,31 @@ extract_row_by_id() {
       '
 }
 
+# Choose newest matching *.txt in dir excluding known names (no ls|grep)
+pick_newest_txt_excluding() {
+  local dir="$1"
+  local newest=""
+  local f
+  shopt -s nullglob
+  for f in "$dir"/*.txt; do
+    [[ -e "$f" ]] || continue
+    case "$f" in
+      */title.txt|*/url.txt|*/langs.txt|*/row.tsv|*/transcript.txt|*/transcript_raw.txt) continue ;;
+    esac
+    if [[ -z "$newest" || "$f" -nt "$newest" ]]; then
+      newest="$f"
+    fi
+  done
+  shopt -u nullglob
+  [[ -n "$newest" ]] || return 1
+  printf '%s\n' "$newest"
+}
+
 normalize_transcript_outputs() {
   local dir="$1"
 
-  local cand
-  cand="$(ls -1t "$dir"/*.txt 2>/dev/null | grep -v -E '/(title|url|langs|row|transcript(_raw)?)\.txt$' | head -n 1 || true)"
+  local cand=""
+  cand="$(pick_newest_txt_excluding "$dir" || true)"
   [[ -n "$cand" ]] || return 1
 
   mv -f "$cand" "$dir/transcript_raw.txt"
@@ -449,6 +473,23 @@ $text
 EOF
 }
 
+# newest audio.* in dir (no ls)
+pick_newest_audio() {
+  local dir="$1"
+  local newest=""
+  local f
+  shopt -s nullglob
+  for f in "$dir"/audio.*; do
+    [[ -e "$f" ]] || continue
+    if [[ -z "$newest" || "$f" -nt "$newest" ]]; then
+      newest="$f"
+    fi
+  done
+  shopt -u nullglob
+  [[ -n "$newest" ]] || return 1
+  printf '%s\n' "$newest"
+}
+
 whisper_transcribe_url_if_needed() {
   local dir="$1"
   local url="$2"
@@ -469,8 +510,8 @@ whisper_transcribe_url_if_needed() {
     die "whisper: yt-dlp audio download fallito (rc=$dlrc). Vedi: $dir/whisper.stderr.txt"
   fi
 
-  local audio
-  audio="$(ls -1t "$dir"/audio.* 2>/dev/null | head -n 1 || true)"
+  local audio=""
+  audio="$(pick_newest_audio "$dir" || true)"
   [[ -n "$audio" ]] || die "whisper: audio non trovato dopo yt-dlp (dir: $dir)"
 
   set +e
