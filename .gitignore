@@ -95,6 +95,9 @@ yt-playlist-*/
 *.flac
 *.wav
 
+in/
+out/
+
 ########################################
 # Opzionale – Traduzioni generate
 # (lasciate commentate per evitare di

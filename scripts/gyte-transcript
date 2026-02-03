@@ -13,6 +13,8 @@ set -euo pipefail
 #   YT_TRANSCRIPT_LANGS="it,en"   (default)
 #   YT_TRANSCRIPT_LANGS="en"      (solo inglese)
 #   YT_TRANSCRIPT_LANGS="fr,en"   (francese con fallback su en)
+#   YT_TRANSCRIPT_LANGS="auto"    (sceglie automaticamente la lingua migliore
+#                                   basandosi su yt-dlp -J: subtitles/automatic_captions + language/original_language)
 #
 # Modalità silenziosa (yt-dlp):
 #   GYTE_YTDLP_QUIET=1  -> passa -q --no-warnings a yt-dlp
@@ -34,7 +36,8 @@ Esempi:
 
 Note:
   - YT_TRANSCRIPT_LANGS controlla l'ordine delle lingue preferite (es. "it,en").
-  - GYTE_YTDLP_QUIET=1 abilita la modalità quiet di yt-dlp.
+  - YT_TRANSCRIPT_LANGS=auto seleziona la lingua usando yt-dlp -J (niente indovinelli).
+  - GYTE_YTDLP_QUIET=1 abilita modalità quiet per yt-dlp.
 EOF
 }
 
@@ -67,7 +70,6 @@ while [ $# -gt 0 ]; do
       break
       ;;
     *)
-      # Primo argomento non-opzione -> presumiamo sia la URL
       break
       ;;
   esac
@@ -83,11 +85,9 @@ shift || true
 
 if [ -z "$URL" ]; then
   echo "ERRORE: URL YouTube mancante." >&2
-  echo "Uso: gyte-transcript [--outdir DIR] <URL YouTube>" >&2
   exit 2
 fi
 
-# Sanity check minimo sull'URL
 if [[ "$URL" == -* ]]; then
   echo "Errore: l'URL non può iniziare con '-' (forse hai invertito ordine argomenti?)." >&2
   exit 1
@@ -98,13 +98,11 @@ if [[ "$URL" != http://* && "$URL" != https://* ]]; then
   exit 1
 fi
 
-# Verifica che yt-dlp sia disponibile
 if ! command -v yt-dlp >/dev/null 2>&1; then
   echo "Errore: 'yt-dlp' non trovato nel PATH. Installalo prima di usare gyte-transcript." >&2
   exit 1
 fi
 
-# Prepara directory di output
 mkdir -p "$OUTDIR"
 if ! cd "$OUTDIR"; then
   echo "Errore: impossibile entrare nella directory di output: $OUTDIR" >&2
@@ -115,7 +113,113 @@ LANGS_RAW="${YT_TRANSCRIPT_LANGS:-it,en}"
 QUIET_FLAG="${GYTE_YTDLP_QUIET:-0}"
 
 echo ">> Output directory: $(pwd)"
-echo ">> Scarico sottotitoli (ordine preferenze: $LANGS_RAW) da: $URL"
+
+# --------------------------
+# YT_TRANSCRIPT_LANGS=auto
+# --------------------------
+_pick_lang_auto() {
+  local url="$1"
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo ""
+    return 0
+  fi
+
+  python3 - "$url" <<'PY'
+import json, subprocess, sys
+
+url = sys.argv[1]
+try:
+    raw = subprocess.check_output(
+        ["yt-dlp", "-J", "--skip-download", "--no-warnings", url],
+        text=True,
+        stderr=subprocess.DEVNULL,
+    )
+except Exception:
+    print("")
+    raise SystemExit(0)
+
+try:
+    data = json.loads(raw)
+except Exception:
+    print("")
+    raise SystemExit(0)
+
+# playlist safety
+if isinstance(data, dict) and data.get("_type") == "playlist" and data.get("entries"):
+    for e in data["entries"]:
+        if e:
+            data = e
+            break
+
+if not isinstance(data, dict):
+    print("")
+    raise SystemExit(0)
+
+subs = data.get("subtitles") or {}
+autos = data.get("automatic_captions") or {}
+audio = (data.get("language") or data.get("original_language") or "").strip()
+
+def keys(d):
+    return sorted([k for k in d.keys() if k and k != "live_chat"])
+
+def pick(d):
+    ks = keys(d)
+    if not ks:
+        return ""
+    # exact audio
+    if audio and audio in d:
+        return audio
+    # base audio (en-US -> en)
+    if audio and ("-" in audio or "_" in audio):
+        base = audio.replace("_","-").split("-")[0]
+        if base in d:
+            return base
+    # prefer *-orig if exists
+    for k in ks:
+        if k.endswith("-orig") or k.endswith("_orig") or k.endswith(".orig"):
+            if not audio or k.startswith(audio):
+                return k
+    # prefix match
+    if audio:
+        base = audio.replace("_","-").split("-")[0]
+        for k in ks:
+            if k == audio or k.startswith(audio+"-") or k.startswith(audio+"_"):
+                return k
+        for k in ks:
+            if k == base or k.startswith(base+"-") or k.startswith(base+"_"):
+                return k
+    # deterministic fallback
+    return ks[0]
+
+lang = pick(subs) or pick(autos) or ""
+print(lang)
+PY
+}
+
+langs_trimmed="${LANGS_RAW//[[:space:]]/}"
+if [[ "${langs_trimmed,,}" == "auto" ]]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "Errore: YT_TRANSCRIPT_LANGS=auto richiede python3 nel PATH." >&2
+    exit 1
+  fi
+  auto_lang="$(_pick_lang_auto "$URL")"
+  auto_lang="${auto_lang//[[:space:]]/}"
+  if [[ -z "$auto_lang" ]]; then
+    echo ">> [WARN] auto: nessuna lingua sottotitoli rilevata via yt-dlp -J (subtitles/automatic_captions vuoti o fallimento)." >&2
+    LANGS_ARR=()
+    LANGS_RAW=""
+  else
+    echo ">> auto: lingua selezionata = $auto_lang" >&2
+    LANGS_RAW="$auto_lang"
+    LANGS_ARR=("$auto_lang")
+  fi
+else
+  echo ">> Scarico sottotitoli (ordine preferenze: $LANGS_RAW) da: $URL"
+  IFS=',' read -r -a LANGS_ARR <<< "$LANGS_RAW"
+fi
+
+echo ">> Scarico sottotitoli (ordine preferenze: ${LANGS_RAW:-<nessuna>}) da: $URL"
 
 # Config file opzionali per yt-dlp
 COMMON_CONF="$HOME/.config/yt-dlp/common.conf"
@@ -135,42 +239,33 @@ else
   echo ">> [INFO] profile-transcript.conf non trovato in $PROFILE_CONF (ok, procedo senza)" >&2
 fi
 
-# Opzioni "solo sottotitoli" sempre applicate,
-# così lo script è autosufficiente anche senza config esterni.
 yt_dlp_base_args+=(
-  --skip-download          # niente video/audio
-  --convert-subs vtt       # normalizza i sottotitoli in .vtt
+  --skip-download
+  --convert-subs vtt
   --extractor-args "youtube:player_client=default"
-  --no-embed-subs          # nessun embed (tanto non c’è video)
+  --no-embed-subs
   -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s"
 )
 
-# Modalità quiet opzionale (solo se valore valido)
 if [ "$QUIET_FLAG" = "1" ]; then
-  yt_dlp_base_args+=(
-    -q            # quiet: solo errori
-    --no-warnings # niente WARN
-  )
+  yt_dlp_base_args+=(-q --no-warnings)
   echo ">> [INFO] Modalità quiet attiva per yt-dlp (GYTE_YTDLP_QUIET=1)" >&2
 elif [ "$QUIET_FLAG" != "0" ]; then
   echo ">> [WARN] GYTE_YTDLP_QUIET ha un valore non riconosciuto ('$QUIET_FLAG'), uso modalità standard." >&2
 fi
 
-# Hardening sugli argomenti extra passati a yt-dlp
-# NON permettiamo opzioni che eseguono comandi o post-processor pericolosi.
+# Hardening argomenti extra passati a yt-dlp
 safe_extra_args=()
 while (("$#")); do
   arg="$1"
   shift
   case "$arg" in
-    # Exec e hook vari: vietati in GYTE
     --exec|--exec=*|\
     --exec-before-download|--exec-before-download=*|\
     --exec-after-download|--exec-after-download=*|\
     --run-postprocessor|--run-postprocessor=*|\
     --postprocessor-args|--postprocessor-args=* )
-      echo "Errore: opzione yt-dlp non consentita in gyte-transcript (potenzialmente pericolosa): $arg" >&2
-      echo "Suggerimento: esegui direttamente 'yt-dlp' se hai davvero bisogno di queste opzioni avanzate." >&2
+      echo "Errore: opzione yt-dlp non consentita in gyte-transcript: $arg" >&2
       exit 1
       ;;
     *)
@@ -179,26 +274,18 @@ while (("$#")); do
   esac
 done
 
-# Split delle lingue su virgola
-IFS=',' read -r -a LANGS_ARR <<< "$LANGS_RAW"
-
 success=0
 attempt_index=0
 
-for lang in "${LANGS_ARR[@]}"; do
-  # trim spazi
+for lang in "${LANGS_ARR[@]:-}"; do
   lang_trim="${lang//[[:space:]]/}"
   [ -z "$lang_trim" ] && continue
 
   attempt_index=$((attempt_index + 1))
   echo ">> Provo lingua: $lang_trim"
 
-  # Conteggio .vtt prima dei tentativi per questa lingua
   vtt_before_lang=$(find . -maxdepth 1 -type f -name '*.vtt' | wc -l)
 
-  #
-  # 1) Tentativo sottotitoli "normali"
-  #
   if yt-dlp \
     "${yt_dlp_base_args[@]}" \
     --write-sub \
@@ -209,24 +296,17 @@ for lang in "${LANGS_ARR[@]}"; do
     vtt_after_lang=$(find . -maxdepth 1 -type f -name '*.vtt' | wc -l)
     if [ "$vtt_after_lang" -gt "$vtt_before_lang" ]; then
       success=1
-      if [ "$attempt_index" -gt 1 ]; then
-        echo ">> [INFO] Fallback lingua: $lang_trim (le lingue precedenti non avevano sottotitoli 'normali')" >&2
-      fi
       echo ">> Sottotitoli 'normali' scaricati con successo per lingua: $lang_trim"
       break
     else
-      echo ">> [WARN] yt-dlp è uscito con codice 0 ma non ha creato nuovi .vtt per lingua '$lang_trim' (sottotitoli 'normali')." >&2
+      echo ">> [WARN] exit 0 ma nessun .vtt nuovo per '$lang_trim' (subs normali)." >&2
     fi
   else
     rc=$?
-    echo ">> [WARN] Nessun sottotitolo 'normale' per lingua '$lang_trim' (yt-dlp exit $rc)" >&2
+    echo ">> [WARN] Nessun sottotitolo 'normale' per '$lang_trim' (exit $rc)" >&2
   fi
 
-  #
-  # 2) Fallback auto-sub
-  #
   echo ">> [INFO] Provo auto-sub per lingua: $lang_trim" >&2
-
   vtt_before_lang_auto=$(find . -maxdepth 1 -type f -name '*.vtt' | wc -l)
 
   if yt-dlp \
@@ -239,24 +319,20 @@ for lang in "${LANGS_ARR[@]}"; do
     vtt_after_lang_auto=$(find . -maxdepth 1 -type f -name '*.vtt' | wc -l)
     if [ "$vtt_after_lang_auto" -gt "$vtt_before_lang_auto" ]; then
       success=1
-      if [ "$attempt_index" -gt 1 ]; then
-        echo ">> [INFO] Fallback lingua: $lang_trim (solo auto-sub disponibili, lingue precedenti fallite)" >&2
-      fi
-      echo ">> [WARN] Solo auto-sub disponibili per lingua '$lang_trim' (nessun sottotitolo 'normale')." >&2
+      echo ">> [WARN] Solo auto-sub disponibili per '$lang_trim'." >&2
       break
     else
-      echo ">> [WARN] yt-dlp è uscito con codice 0 ma non ha creato nuovi .vtt per lingua '$lang_trim' (auto-sub)." >&2
+      echo ">> [WARN] exit 0 ma nessun .vtt nuovo per '$lang_trim' (auto-sub)." >&2
     fi
   else
     rc=$?
-    echo ">> [WARN] yt-dlp non ha scaricato nemmeno auto-sub per lingua '$lang_trim' (exit $rc)" >&2
+    echo ">> [WARN] nemmeno auto-sub per '$lang_trim' (exit $rc)" >&2
   fi
 done
 
 if [ "$success" -eq 0 ]; then
-  echo "⚠️  Attenzione: yt-dlp non è riuscito a scaricare sottotitoli (normali né auto-sub) per nessuna delle lingue ($LANGS_RAW)." >&2
-  echo "    Controlla se il video ha sottotitoli oppure prova a impostare, ad es.:" >&2
-  echo '      YT_TRANSCRIPT_LANGS="en,en-orig" gyte-transcript "<URL_YT>"' >&2
+  echo "⚠️  Attenzione: yt-dlp non è riuscito a scaricare sottotitoli (normali né auto-sub) per (${LANGS_RAW:-<nessuna>})." >&2
+  echo '      Suggerimento: YT_TRANSCRIPT_LANGS="en,en-orig" gyte-transcript "<URL_YT>"' >&2
 fi
 
 echo ">> Pulizia file .vtt -> .txt/.srt/.md (se presenti)..."
@@ -264,12 +340,11 @@ echo ">> Pulizia file .vtt -> .txt/.srt/.md (se presenti)..."
 for f in *.vtt; do
   [ -e "$f" ] || continue
 
-  base_no_vtt="${f%.vtt}"     # es: "Uploader - Titolo [ID].en"
+  base_no_vtt="${f%.vtt}"
   txt_out="${base_no_vtt}.txt"
   srt_out="${base_no_vtt}.srt"
   md_out="${base_no_vtt}.md"
 
-  # 1) .txt pulito
   sed -E \
     -e '/^WEBVTT/d' \
     -e '/^Kind:/d' \
@@ -284,60 +359,32 @@ for f in *.vtt; do
   | awk 'prev != $0 { if ($0 != "") print; prev = $0 }' \
   > "$txt_out"
 
-  echo "   Creato: $txt_out (da $f)"
-
-  # 2) .srt — reformat dei timestamp in stile SRT
   awk '
-    BEGIN {
-      idx = 0
-      in_note = 0
-    }
-
-    /^WEBVTT/ { next }              # rimuovi header
+    BEGIN { idx=0; in_note=0 }
+    /^WEBVTT/ { next }
     /^Kind:/ { next }
     /^Language:/ { next }
-
-    /^NOTE/ { in_note = 1; next }
-    in_note && NF == 0 { in_note = 0; next }
+    /^NOTE/ { in_note=1; next }
+    in_note && NF==0 { in_note=0; next }
     in_note { next }
-
-    /^[[:space:]]*$/ {
-      # riga vuota → separatore tra cue
-      print ""
-      next
-    }
-
-    # linea di timestamp VTT
+    /^[[:space:]]*$/ { print ""; next }
     /^[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}[[:space:]]+-->[[:space:]]+[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/ {
       idx++
-      # split per prendere solo start/end, ignorando eventuali attributi extra
-      n = split($0, a, /[[:space:]]+/)
-      start = a[1]
-      arrow = a[2]
-      end = a[3]
-      gsub(/\./, ",", start)
-      gsub(/\./, ",", end)
+      n=split($0,a,/[[:space:]]+/)
+      start=a[1]; arrow=a[2]; end=a[3]
+      gsub(/\./,",",start); gsub(/\./,",",end)
       print idx
       print start " " arrow " " end
       next
     }
-
-    {
-      print
-    }
+    { print }
   ' "$f" > "$srt_out"
 
-  echo "   Creato: $srt_out (da $f)"
-
-  # 3) .md — Markdown semplice per singolo video
   {
     printf "# %s\n\n" "$(basename "$base_no_vtt")"
     cat "$txt_out"
     printf "\n"
   } > "$md_out"
 
-  echo "   Creato: $md_out (da $txt_out)"
-
-  echo "   Elimino sorgente VTT: $f"
   rm -- "$f"
 done

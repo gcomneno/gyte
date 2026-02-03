@@ -1,0 +1,968 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROG="gyte-explain"
+
+DEFAULT_IN="./in/urls.tsv"
+DEFAULT_OUT_BASE="./out"
+DEFAULT_MAX_CHARS=12000
+DEFAULT_AI="local"      # local | openai | whisper | off
+DEFAULT_BULLETS=10      # target bullets for local summary
+DEFAULT_LANGS="it,en"   # used if neither --langs nor YT_TRANSCRIPT_LANGS provided
+
+VERBOSE=0
+INFILE="$DEFAULT_IN"
+OUT_BASE="$DEFAULT_OUT_BASE"
+AI_MODE="$DEFAULT_AI"
+MAX_CHARS="$DEFAULT_MAX_CHARS"
+BULLETS="$DEFAULT_BULLETS"
+
+# LANGS precedence:
+# 1) --langs
+# 2) env YT_TRANSCRIPT_LANGS
+# 3) DEFAULT_LANGS
+LANGS="${YT_TRANSCRIPT_LANGS:-$DEFAULT_LANGS}"
+
+TRANSCRIPT_SOURCE="unknown"   # subs | whisper | unknown
+SUMMARY_SOURCE="none"         # local | openai | none
+
+# manifest runtime vars (best-effort; must not alter behavior)
+_MANIFEST_READY=0
+_MANIFEST_RUN_DIR=""
+_MANIFEST_ITEM_DIR=""
+_MANIFEST_ITEM_ID=""
+_MANIFEST_RUN_ID=""
+_MANIFEST_TITLE=""
+_MANIFEST_RAW_URL=""
+_MANIFEST_URL=""
+_MANIFEST_REFLOWED="0"
+_MANIFEST_STDOUT_SUMMARY_EMITTED="0"
+_MANIFEST_ARGV=""         # legacy string
+_MANIFEST_ARGV_JSON=""    # new JSON list
+_MANIFEST_ARGV_ARR=()     # new array form
+
+# Robust self dir (symlink-safe)
+_SELF="$(readlink -f -- "${BASH_SOURCE[0]}")"
+_SCRIPT_DIR="$(cd -- "$(dirname -- "$_SELF")" && pwd)"
+_REPO_ROOT="$(cd -- "${_SCRIPT_DIR}/.." && pwd)"
+
+# Try to source manifest helper (best-effort; silent by default)
+if [[ -f "${_SCRIPT_DIR}/../lib/gyte-manifest.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${_SCRIPT_DIR}/../lib/gyte-manifest.sh"
+  _MANIFEST_READY=1
+elif [[ -f "${_SCRIPT_DIR}/lib/gyte-manifest.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "${_SCRIPT_DIR}/lib/gyte-manifest.sh"
+  _MANIFEST_READY=1
+elif [[ -f "./lib/gyte-manifest.sh" ]]; then
+  # shellcheck source=/dev/null
+  source "./lib/gyte-manifest.sh"
+  _MANIFEST_READY=1
+fi
+
+ts(){ date '+%Y-%m-%d %H:%M:%S'; }
+log(){ (( VERBOSE )) && echo "[$PROG] $(ts) $*" >&2 || true; }
+die(){ echo "ERRORE: $*" >&2; exit 2; }
+
+need(){ command -v "$1" >/dev/null 2>&1 || die "comando richiesto non trovato: $1"; }
+
+usage() {
+  cat <<EOF
+Uso:
+  $PROG ID [opzioni]
+
+Opzioni:
+  --in FILE           TSV (default: $DEFAULT_IN)
+  --out-base DIR      base output (default: $DEFAULT_OUT_BASE)
+  --ai MODE           local|openai|whisper|off (default: $DEFAULT_AI)
+  --langs LISTA       es: "it,en" (default: env YT_TRANSCRIPT_LANGS oppure "$DEFAULT_LANGS")
+  --bullets N         target bullet local (default: $DEFAULT_BULLETS)
+  --max-chars N       max chars per openai (default: $DEFAULT_MAX_CHARS)
+  --verbose           log su stderr
+  -h, --help          help
+
+Note:
+- transcript sempre in out/: transcript.txt (reflowed se possibile; altrimenti raw promosso)
+- Riassunto: default local (stdout + summary.txt); openai se key presente; whisper solo per ottenere transcript se subs assenti; off = niente.
+- Il summary stampa sempre in testa il TITOLO del video (tra parentesi quadre).
+EOF
+}
+
+norm_id() {
+  local s="${1:-}"
+  [[ -n "$s" ]] || return 1
+  if [[ "$s" =~ ^[0-9]{1,3}$ ]]; then
+    printf "%03d" "$s"
+    return 0
+  fi
+  if [[ "$s" =~ ^[0-9]{3}$ ]]; then
+    echo "$s"
+    return 0
+  fi
+  return 1
+}
+
+extract_row_by_id() {
+  local file="$1"
+  local id="$2"
+  local want_int
+  want_int=$((10#$id))
+
+  sed -e $'s/\\\\t/\t/g' -e 's/\r$//' "$file" \
+    | awk -F'\t' -v want_int="$want_int" '
+        BEGIN{OFS="\t"}
+        function trim(s){ gsub(/^[[:space:]]+|[[:space:]]+$/, "", s); return s }
+        /^[[:space:]]*#/ {next}
+        NF>=3 {
+          idf=trim($1)
+          if (idf !~ /^[0-9]+$/) next
+          if ((idf+0) == want_int) {
+            title=trim($2); url=trim($3)
+            gsub(/\t/, " ", title)
+            gsub(/\r$/, "", title); gsub(/\r$/, "", url)
+            print title, url
+            exit 0
+          }
+        }
+        END{ exit 1 }
+      '
+}
+
+normalize_transcript_outputs() {
+  local dir="$1"
+
+  local cand
+  cand="$(ls -1t "$dir"/*.txt 2>/dev/null | grep -v -E '/(title|url|langs|row|transcript(_raw)?)\.txt$' | head -n 1 || true)"
+  [[ -n "$cand" ]] || return 1
+
+  mv -f "$cand" "$dir/transcript_raw.txt"
+  rm -f -- "$dir"/*.srt "$dir"/*.md "$dir"/*.vtt 2>/dev/null || true
+  find "$dir" -maxdepth 1 -type f -name "*.txt" \
+    ! -name "title.txt" ! -name "url.txt" ! -name "langs.txt" ! -name "row.tsv" ! -name "transcript_raw.txt" -delete 2>/dev/null || true
+
+  [[ -s "$dir/transcript_raw.txt" ]] || return 1
+  return 0
+}
+
+transcript_raw_looks_like_log() {
+  local f="$1"
+  [[ -s "$f" ]] || return 0
+
+  awk '
+    function is_bad(line) {
+      if (line ~ /^(\[[A-Z]{3,6}\]|ERROR:|WARNING:|Traceback|Suggerimento:)/) return 1
+      if (line ~ /\[youtube\]/) return 1
+      if (line ~ /yt-dlp/) return 1
+      if (line ~ /This live event will begin in/) return 1
+      return 0
+    }
+    BEGIN { total=0; bad=0; chars=0; }
+    {
+      gsub(/\r$/, "", $0)
+      if ($0 ~ /^[[:space:]]*$/) next
+      total++
+      chars += length($0)
+      if (is_bad($0)) bad++
+    }
+    END {
+      if (chars < 250 && bad >= 1) exit 0
+      if (total > 0) {
+        ratio = bad / total
+        if (bad >= 3 && ratio >= 0.25) exit 0
+      }
+      exit 1
+    }
+  ' "$f"
+}
+
+reflow_or_promote_raw() {
+  local dir="$1"
+  local raw="$dir/transcript_raw.txt"
+  local out="$dir/transcript.txt"
+  local tmp="$dir/.transcript.reflow.tmp"
+
+  [[ -s "$raw" ]] || die "reflow: input mancante o vuoto: $raw"
+
+  set +e
+  gyte-reflow-text --ai-friendly --strict-utf8 "$raw" >"$tmp"
+  local rc=$?
+  set -e
+
+  if (( rc == 0 )) && [[ -s "$tmp" ]]; then
+    mv -f "$tmp" "$out"
+    rm -f "$raw" 2>/dev/null || true
+    _MANIFEST_REFLOWED="1"
+    log "reflow: OK (transcript_raw.txt rimosso)"
+    return 0
+  fi
+
+  rm -f "$tmp" 2>/dev/null || true
+  mv -f "$raw" "$out"
+  _MANIFEST_REFLOWED="0"
+  log "reflow: FALLITO -> transcript_raw promosso a transcript.txt"
+  return 0
+}
+
+write_summary() {
+  local out_file="$1"
+  local title="$2"
+  local body="$3"
+
+  {
+    printf '[%s]\n\n' "$title"
+    printf '%s\n' "$body"
+  } >"$out_file"
+
+  _MANIFEST_STDOUT_SUMMARY_EMITTED="1"
+  cat "$out_file"
+}
+
+local_summarize_file() {
+  local transcript_file="$1"
+  local bullets="$2"
+
+  python3 - "$transcript_file" "$bullets" <<'PY'
+import re, sys, textwrap
+from collections import Counter
+
+path = sys.argv[1]
+target = int(sys.argv[2])
+
+raw = open(path, "r", encoding="utf-8", errors="replace").read()
+raw = raw.replace(">>", " ")
+raw = re.sub(r"\s+", " ", raw).strip()
+if not raw:
+    sys.exit(10)
+
+sent = re.split(r"(?<=[\.\!\?])\s+", raw)
+sent = [s.strip() for s in sent if s and s.strip()]
+
+stop = set("""
+a ad al allo agli alle alla all un uno una di del della dei delle che e ed o ma
+il lo la i gli le in su per con da dal dei delle degli delle nel nello nella
+non si mi ti ci vi ne lui lei loro questo questa questi queste quello quella
+the and or but a an to of in on for with from is are was were be been being
+""".split())
+
+filler_re = re.compile(
+    r"\b("
+    r"cio[eè]|diciamo|insomma|praticamente|allora|beh|eh|ecco|vabb[eè]|"
+    r"tipo|in pratica|per dire|capito|ok|cioe"
+    r")\b",
+    re.IGNORECASE
+)
+
+def normalize_text(s: str) -> str:
+    s = s.replace(">>", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+
+    prev = None
+    for _ in range(3):
+        prev = s
+        s = filler_re.sub("", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        if s == prev:
+            break
+
+    s = re.sub(r"\s+([,;:\.\!\?])", r"\1", s)
+    s = re.sub(r"([,;:]){2,}", r"\1", s)
+    s = re.sub(r"\(\s+", "(", s)
+    s = re.sub(r"\s+\)", ")", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    s = s.lstrip(" ,;:-").strip()
+    return s
+
+word_re = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ0-9’']{3,}")
+
+def token_set(s: str):
+    toks = [t.lower() for t in word_re.findall(s)]
+    toks = [t for t in toks if t not in stop and not t.isdigit()]
+    return set(toks)
+
+def jaccard(a: set, b: set) -> float:
+    if not a or not b:
+        return 0.0
+    inter = len(a & b)
+    union = len(a | b)
+    return inter / union if union else 0.0
+
+cand = []
+for i, s in enumerate(sent):
+    s2 = normalize_text(s)
+    if len(s2) < 45:
+        continue
+    if len(s2) > 600:
+        s2 = s2[:600].rsplit(" ", 1)[0] + "..."
+    cand.append((i, s2))
+
+if not cand:
+    out = [normalize_text(s) for s in sent[:max(1, min(target, len(sent)))] if normalize_text(s)]
+    for s in out:
+        print("- " + s)
+        print()
+    sys.exit(0)
+
+freq = Counter()
+for _, s in cand:
+    freq.update(token_set(s))
+
+scored = []
+for pos, s in cand:
+    toks = token_set(s)
+    if not toks:
+        continue
+    score = sum(freq[t] for t in toks)
+    L = len(toks)
+    score = score / (12 + L)
+    scored.append((score, pos, s, toks))
+
+scored.sort(reverse=True, key=lambda x: x[0])
+
+max_possible = len(scored)
+if max_possible <= 8:
+    n_target = max_possible
+elif max_possible <= 12:
+    n_target = max_possible
+else:
+    n_target = max(8, min(12, target))
+
+selected = []
+selected_sets = []
+SIM_TH = 0.72
+
+for score, pos, s, toks in scored:
+    too_close = False
+    for prev in selected_sets:
+        if jaccard(toks, prev) >= SIM_TH:
+            too_close = True
+            break
+    if too_close:
+        continue
+    selected.append((pos, s, toks))
+    selected_sets.append(toks)
+    if len(selected) >= n_target:
+        break
+
+if len(selected) < min(6, n_target):
+    for score, pos, s, toks in scored:
+        if len(selected) >= n_target:
+            break
+        if any(pos == p for p, _, _ in selected):
+            continue
+        selected.append((pos, s, toks))
+
+selected.sort(key=lambda x: x[0])
+
+WRAP = 110
+def format_bullet(s: str) -> str:
+    lines = textwrap.wrap(s, width=WRAP, break_long_words=False, break_on_hyphens=False)
+    if not lines:
+        return "- " + s
+    out = ["- " + lines[0]]
+    for ln in lines[1:]:
+        out.append("  " + ln)
+    return "\n".join(out)
+
+for _, s, _ in selected:
+    s = normalize_text(s)
+    if not s:
+        continue
+    print(format_bullet(s))
+    print()
+PY
+}
+
+openai_call() {
+  local prompt="$1"
+  local timeout_s="${2:-240}"
+  local model="${GYTE_OPENAI_MODEL:-gpt-4o-mini}"
+
+  python3 - "$model" "$prompt" "$timeout_s" <<'PY'
+import json, os, sys, urllib.request, urllib.error, socket
+
+model = sys.argv[1]
+prompt = sys.argv[2]
+timeout_s = int(sys.argv[3])
+
+api_key = os.environ.get("OPENAI_API_KEY","").strip()
+if not api_key:
+  print("[openai_call] ERROR: OPENAI_API_KEY non impostata", file=sys.stderr)
+  sys.exit(21)
+
+url = "https://api.openai.com/v1/chat/completions"
+payload = {
+  "model": model,
+  "messages": [
+    {"role":"system","content":"Sei un assistente che riassume trascrizioni in modo chiaro e fedele."},
+    {"role":"user","content": prompt},
+  ],
+  "temperature": 0.2,
+}
+data = json.dumps(payload).encode("utf-8")
+req = urllib.request.Request(
+  url,
+  data=data,
+  headers={
+    "Content-Type": "application/json",
+    "Authorization": f"Bearer {api_key}",
+  },
+  method="POST",
+)
+
+try:
+  with urllib.request.urlopen(req, timeout=timeout_s) as r:
+    raw = r.read().decode("utf-8", errors="replace")
+except (urllib.error.HTTPError, urllib.error.URLError, socket.timeout) as e:
+  print(f"[openai_call] ERROR: request failed: {e}", file=sys.stderr)
+  if hasattr(e, "read"):
+    try:
+      print(e.read().decode("utf-8", errors="replace"), file=sys.stderr)
+    except Exception:
+      pass
+  sys.exit(22)
+
+j = json.loads(raw)
+txt = (j.get("choices",[{}])[0].get("message",{}).get("content") or "").strip()
+if not txt:
+  print("[openai_call] ERROR: risposta vuota", file=sys.stderr)
+  sys.exit(24)
+print(txt)
+PY
+}
+
+make_openai_prompt() {
+  local title="$1" url="$2" text="$3"
+  cat <<EOF
+Scrivi un RIASSUNTO fedele del testo qui sotto.
+
+Regole:
+- Scrivi nella STESSA lingua del testo (non tradurre).
+- 8–12 bullet (inizia ogni riga con "- ").
+- Niente preamboli.
+
+Titolo: $title
+URL: $url
+
+TESTO:
+$text
+EOF
+}
+
+whisper_transcribe_url_if_needed() {
+  local dir="$1"
+  local url="$2"
+
+  command -v gyte-whisper-local >/dev/null 2>&1 || die "--ai whisper richiesto ma gyte-whisper-local non trovato nel PATH"
+  need yt-dlp
+
+  log "whisper: nessun subs utile -> scarico audio (mp3) e trascrivo localmente (opt-in)"
+
+  rm -f -- "$dir"/audio.* 2>/dev/null || true
+
+  local tmpl="$dir/audio.%(ext)s"
+  set +e
+  yt-dlp -x --audio-format mp3 --audio-quality 5 -o "$tmpl" "$url" >/dev/null 2>"$dir/whisper.stderr.txt"
+  local dlrc=$?
+  set -e
+  if (( dlrc != 0 )); then
+    die "whisper: yt-dlp audio download fallito (rc=$dlrc). Vedi: $dir/whisper.stderr.txt"
+  fi
+
+  local audio
+  audio="$(ls -1t "$dir"/audio.* 2>/dev/null | head -n 1 || true)"
+  [[ -n "$audio" ]] || die "whisper: audio non trovato dopo yt-dlp (dir: $dir)"
+
+  set +e
+  GYTE_OUTDIR="$dir" gyte-whisper-local "$audio" >/dev/null 2>>"$dir/whisper.stderr.txt"
+  local sttrc=$?
+  set -e
+  if (( sttrc != 0 )); then
+    die "whisper: trascrizione fallita (rc=$sttrc). Vedi: $dir/whisper.stderr.txt"
+  fi
+
+  local produced_txt="${audio%.*}.txt"
+  [[ -s "$produced_txt" ]] || die "whisper: output txt mancante: $produced_txt"
+
+  mv -f "$produced_txt" "$dir/transcript_raw.txt"
+  TRANSCRIPT_SOURCE="whisper"
+  log "transcript_source=whisper (used)"
+
+  if (( VERBOSE == 0 )); then
+    rm -f -- "$dir"/audio.* 2>/dev/null || true
+  fi
+}
+
+normalize_youtube_url() {
+  local u="$1"
+  u="${u#"${u%%[![:space:]]*}"}"
+  u="${u%"${u##*[![:space:]]}"}"
+
+  if [[ "$u" =~ ^https?://youtu\.be/([A-Za-z0-9_-]{6,}) ]]; then
+    local vid="${BASH_REMATCH[1]}"
+    printf 'https://www.youtube.com/watch?v=%s\n' "$vid"
+    return 0
+  fi
+
+  if [[ "$u" =~ ^https?://(www\.)?youtube\.com/ ]]; then
+    printf '%s\n' "$u"
+    return 0
+  fi
+
+  return 1
+}
+
+gyte__manifest_on_exit() {
+  local rc=$?
+  set +e
+
+  if (( _MANIFEST_READY == 1 )) && [[ -n "${_MANIFEST_RUN_DIR}" ]] && [[ -n "${_MANIFEST_ITEM_DIR}" ]] && [[ -n "${_MANIFEST_ITEM_ID}" ]] && [[ -d "${_MANIFEST_ITEM_DIR}" ]]; then
+    local m_transcript_source="none"
+    case "${TRANSCRIPT_SOURCE}" in
+      subs) m_transcript_source="subs";;
+      whisper) m_transcript_source="whisper";;
+      *) m_transcript_source="none";;
+    esac
+
+    local m_summary_source="none"
+    case "${SUMMARY_SOURCE}" in
+      local) m_summary_source="local";;
+      openai) m_summary_source="openai";;
+      *) m_summary_source="none";;
+    esac
+
+    local m_status=""
+    local m_errmsg=""
+    if (( rc == 2 )); then
+      m_status="invalid_url"
+      m_errmsg="invalid url"
+    elif (( rc == 3 )); then
+      m_status="no_transcript"
+      m_errmsg="__NULL__"
+    fi
+
+    export GYTE_ITEM_DIR="${_MANIFEST_ITEM_DIR}"
+    export GYTE_RUN_DIR="${_MANIFEST_RUN_DIR}"
+    export GYTE_RUN_ID="${_MANIFEST_RUN_ID}"
+    export GYTE_ITEM_ID="${_MANIFEST_ITEM_ID}"
+    export GYTE_AI_MODE="${AI_MODE}"
+    export GYTE_LANGS_CSV="${LANGS}"
+    export GYTE_TITLE="${_MANIFEST_TITLE}"
+    export GYTE_URL="${_MANIFEST_URL:-}"
+    export GYTE_TRANSCRIPT_SOURCE="${m_transcript_source}"
+    export GYTE_SUMMARY_SOURCE="${m_summary_source}"
+    export GYTE_REFLOWED="${_MANIFEST_REFLOWED:-0}"
+    export GYTE_STDOUT_SUMMARY_EMITTED="${_MANIFEST_STDOUT_SUMMARY_EMITTED:-0}"
+    export GYTE_TSV_ROW_PRESENT="1"
+    export GYTE_ARGV="${_MANIFEST_ARGV:-}"
+    export GYTE_ARGV_JSON="${_MANIFEST_ARGV_JSON:-}"
+    export GYTE_GYTE_VERSION="${GYTE_GYTE_VERSION:-UNKNOWN}"
+
+    if [[ -n "${m_status}" ]]; then
+      export GYTE_STATUS="${m_status}"
+    else
+      unset GYTE_STATUS 2>/dev/null || true
+    fi
+
+    if [[ -n "${m_errmsg}" ]]; then
+      export GYTE_ERROR_MESSAGE="${m_errmsg}"
+    else
+      unset GYTE_ERROR_MESSAGE 2>/dev/null || true
+    fi
+
+    gyte__m_item_manifest_update
+    gyte__m_item_manifest_finalize
+    gyte__m_run_manifest_update
+  fi
+
+  set -e
+  return 0
+}
+
+trap gyte__manifest_on_exit EXIT
+
+# ---------------- parse args ----------------
+
+ID_RAW="${1:-}"
+if [[ -z "${ID_RAW}" ]] || [[ "${ID_RAW}" == "-h" ]] || [[ "${ID_RAW}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+shift || true
+
+ID="$(norm_id "$ID_RAW" || true)"
+[[ -n "$ID" ]] || die "ID non valido: '$ID_RAW'"
+
+# Build argv array (real tokens)
+_MANIFEST_ARGV_ARR=("$PROG" "$ID_RAW")
+_MANIFEST_ARGV="$PROG $ID_RAW"
+
+while (( $# > 0 )); do
+  case "$1" in
+    --in)
+      (( $#>=2 )) || die "--in richiede FILE"
+      INFILE="$2"
+      _MANIFEST_ARGV_ARR+=("--in" "$2")
+      _MANIFEST_ARGV+=" --in $2"
+      shift 2
+      ;;
+    --in=*)
+      INFILE="${1#*=}"
+      _MANIFEST_ARGV_ARR+=("$1")
+      _MANIFEST_ARGV+=" $1"
+      shift
+      ;;
+    --out-base)
+      (( $#>=2 )) || die "--out-base richiede DIR"
+      OUT_BASE="$2"
+      _MANIFEST_ARGV_ARR+=("--out-base" "$2")
+      _MANIFEST_ARGV+=" --out-base $2"
+      shift 2
+      ;;
+    --out-base=*)
+      OUT_BASE="${1#*=}"
+      _MANIFEST_ARGV_ARR+=("$1")
+      _MANIFEST_ARGV+=" $1"
+      shift
+      ;;
+    --ai)
+      (( $#>=2 )) || die "--ai richiede local|openai|whisper|off"
+      AI_MODE="$2"
+      _MANIFEST_ARGV_ARR+=("--ai" "$2")
+      _MANIFEST_ARGV+=" --ai $2"
+      shift 2
+      ;;
+    --ai=*)
+      AI_MODE="${1#*=}"
+      _MANIFEST_ARGV_ARR+=("$1")
+      _MANIFEST_ARGV+=" $1"
+      shift
+      ;;
+    --langs)
+      (( $#>=2 )) || die "--langs richiede LISTA"
+      LANGS="$2"
+      _MANIFEST_ARGV_ARR+=("--langs" "$2")
+      _MANIFEST_ARGV+=" --langs $2"
+      shift 2
+      ;;
+    --langs=*)
+      LANGS="${1#*=}"
+      _MANIFEST_ARGV_ARR+=("$1")
+      _MANIFEST_ARGV+=" $1"
+      shift
+      ;;
+    --bullets)
+      (( $#>=2 )) || die "--bullets richiede N"
+      BULLETS="$2"
+      _MANIFEST_ARGV_ARR+=("--bullets" "$2")
+      _MANIFEST_ARGV+=" --bullets $2"
+      shift 2
+      ;;
+    --bullets=*)
+      BULLETS="${1#*=}"
+      _MANIFEST_ARGV_ARR+=("$1")
+      _MANIFEST_ARGV+=" $1"
+      shift
+      ;;
+    --max-chars)
+      (( $#>=2 )) || die "--max-chars richiede N"
+      MAX_CHARS="$2"
+      _MANIFEST_ARGV_ARR+=("--max-chars" "$2")
+      _MANIFEST_ARGV+=" --max-chars $2"
+      shift 2
+      ;;
+    --max-chars=*)
+      MAX_CHARS="${1#*=}"
+      _MANIFEST_ARGV_ARR+=("$1")
+      _MANIFEST_ARGV+=" $1"
+      shift
+      ;;
+    --verbose)
+      VERBOSE=1
+      _MANIFEST_ARGV_ARR+=("--verbose")
+      _MANIFEST_ARGV+=" --verbose"
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      die "opzione non riconosciuta: $1"
+      ;;
+  esac
+done
+
+# argv JSON (best-effort; never fatal)
+set +e
+_MANIFEST_ARGV_JSON="$(python3 - <<'PY' "${_MANIFEST_ARGV_ARR[@]}"
+import json, sys
+print(json.dumps(sys.argv[1:], ensure_ascii=False))
+PY
+)"
+set -e
+
+# gyte version (VERSION file -> git describe -> UNKNOWN), best-effort
+GYTE_GYTE_VERSION="UNKNOWN"
+if [[ -f "${_REPO_ROOT}/VERSION" ]]; then
+  v="$(sed -e 's/\r$//' "${_REPO_ROOT}/VERSION" | head -n 1 | tr -d ' \t')"
+  [[ -n "$v" ]] && GYTE_GYTE_VERSION="$v"
+elif command -v git >/dev/null 2>&1 && [[ -d "${_REPO_ROOT}/.git" ]]; then
+  set +e
+  v="$(cd "${_REPO_ROOT}" && git describe --tags --dirty --always 2>/dev/null)"
+  set -e
+  [[ -n "${v:-}" ]] && GYTE_GYTE_VERSION="$v"
+fi
+export GYTE_GYTE_VERSION
+
+[[ -f "$INFILE" ]] || die "input non trovato: $INFILE"
+[[ "$MAX_CHARS" =~ ^[0-9]+$ ]] || die "--max-chars deve essere intero"
+(( MAX_CHARS >= 500 )) || die "--max-chars troppo basso (>=500)"
+[[ "$BULLETS" =~ ^[0-9]+$ ]] || die "--bullets deve essere intero"
+(( BULLETS >= 3 )) || die "--bullets troppo basso (>=3)"
+[[ -n "${LANGS//[[:space:]]/}" ]] || die "--langs vuoto"
+case "$AI_MODE" in local|openai|whisper|off) :;; *) die "--ai non valido";; esac
+
+need awk; need sed; need date; need mkdir; need head; need wc; need python3
+need gyte-reflow-text
+need gyte-transcript
+
+# ---------------- core ----------------
+
+row="$(extract_row_by_id "$INFILE" "$ID" || true)"
+[[ -n "$row" ]] || die "ID $ID non trovato in $INFILE"
+
+title="$(printf '%s' "$row" | awk -F'\t' '{print $1}')"
+raw_url="$(printf '%s' "$row" | awk -F'\t' '{print $2}')"
+[[ -n "$raw_url" ]] || die "riga ID $ID senza URL"
+
+TS="$(date '+%Y%m%d-%H%M%S')"
+RUN="$OUT_BASE/gyte-explain-$TS"
+DIR="$RUN/items/$ID"
+mkdir -p "$DIR"
+
+_MANIFEST_RUN_DIR="$RUN"
+_MANIFEST_ITEM_DIR="$DIR"
+_MANIFEST_ITEM_ID="$ID"
+_MANIFEST_RUN_ID="$(basename -- "$RUN")"
+_MANIFEST_TITLE="$title"
+_MANIFEST_RAW_URL="$raw_url"
+_MANIFEST_URL=""
+
+if (( _MANIFEST_READY == 1 )); then
+  export GYTE_ITEM_DIR="$DIR"
+  export GYTE_RUN_DIR="$RUN"
+  export GYTE_RUN_ID="${_MANIFEST_RUN_ID}"
+  export GYTE_ITEM_ID="$ID"
+  export GYTE_AI_MODE="$AI_MODE"
+  export GYTE_LANGS_CSV="$LANGS"
+  export GYTE_TITLE="$title"
+  export GYTE_URL="$raw_url"
+  export GYTE_TRANSCRIPT_SOURCE="none"
+  export GYTE_SUMMARY_SOURCE="none"
+  export GYTE_REFLOWED="0"
+  export GYTE_STDOUT_SUMMARY_EMITTED="0"
+  export GYTE_TSV_ROW_PRESENT="1"
+  export GYTE_ARGV="${_MANIFEST_ARGV}"
+  export GYTE_ARGV_JSON="${_MANIFEST_ARGV_JSON}"
+  gyte__m_item_manifest_init
+  gyte__m_run_manifest_update
+fi
+
+printf '%s\n' "$raw_url" > "$DIR/url.txt"
+printf '%s\n' "$title" > "$DIR/title.txt"
+printf '%s\n' "$LANGS" > "$DIR/langs.txt"
+
+if (( _MANIFEST_READY == 1 )); then
+  export GYTE_ITEM_DIR="$DIR"
+  export GYTE_TITLE="$title"
+  export GYTE_URL="$raw_url"
+  export GYTE_LANGS_CSV="$LANGS"
+  export GYTE_AI_MODE="$AI_MODE"
+  export GYTE_TSV_ROW_PRESENT="1"
+  export GYTE_ARGV="${_MANIFEST_ARGV}"
+  export GYTE_ARGV_JSON="${_MANIFEST_ARGV_JSON}"
+  gyte__m_item_manifest_update
+  gyte__m_run_manifest_update
+fi
+
+if ! url="$(normalize_youtube_url "$raw_url")"; then
+  msg="URL non valido o non supportato (atteso youtube.com o youtu.be): $raw_url"
+  echo "ERRORE: $msg" >&2
+  printf '%s\n' "$msg" > "$DIR/transcript_error.txt"
+  log "DONE (invalid_url). Artefatti in: $DIR"
+  exit 2
+fi
+
+_MANIFEST_URL="$url"
+
+printf '%s\t%s\t%s\n' "$ID" "$title" "$url" > "$DIR/row.tsv"
+
+if (( _MANIFEST_READY == 1 )); then
+  export GYTE_ITEM_DIR="$DIR"
+  export GYTE_TITLE="$title"
+  export GYTE_URL="$url"
+  export GYTE_LANGS_CSV="$LANGS"
+  export GYTE_AI_MODE="$AI_MODE"
+  export GYTE_TSV_ROW_PRESENT="1"
+  export GYTE_ARGV="${_MANIFEST_ARGV}"
+  export GYTE_ARGV_JSON="${_MANIFEST_ARGV_JSON}"
+  gyte__m_item_manifest_update
+  gyte__m_run_manifest_update
+fi
+
+log "RUN=$RUN"
+log "ID=$ID"
+log "title=$title"
+log "url=$url"
+log "ai_mode=$AI_MODE"
+log "langs=$LANGS"
+
+set +e
+YT_TRANSCRIPT_LANGS="$LANGS" GYTE_OUTDIR="$DIR" gyte-transcript "$url" >"$DIR/transcriber.stdout.txt" 2>"$DIR/transcript.stderr.txt"
+rc=$?
+set -e
+rm -f "$DIR/transcriber.stdout.txt" 2>/dev/null || true
+
+if (( rc == 0 )); then
+  if normalize_transcript_outputs "$DIR"; then
+    TRANSCRIPT_SOURCE="subs"
+    log "transcript_source=subs (used)"
+  else
+    log "subs ok ma nessun .txt utile trovato (o vuoto)"
+  fi
+else
+  log "gyte-transcript rc=$rc (possibile: no subs)"
+fi
+
+if [[ -s "$DIR/transcript_raw.txt" ]] && transcript_raw_looks_like_log "$DIR/transcript_raw.txt"; then
+  log "transcript_raw sembra log/errore -> scarto transcript_raw"
+  rm -f "$DIR/transcript_raw.txt" 2>/dev/null || true
+  TRANSCRIPT_SOURCE="unknown"
+fi
+
+if [[ "$AI_MODE" == "whisper" ]] && [[ ! -s "$DIR/transcript_raw.txt" ]]; then
+  whisper_transcribe_url_if_needed "$DIR" "$url"
+fi
+
+if (( _MANIFEST_READY == 1 )); then
+  export GYTE_ITEM_DIR="$DIR"
+  export GYTE_AI_MODE="$AI_MODE"
+  export GYTE_LANGS_CSV="$LANGS"
+  export GYTE_TITLE="$title"
+  export GYTE_URL="$url"
+  export GYTE_ARGV="${_MANIFEST_ARGV}"
+  export GYTE_ARGV_JSON="${_MANIFEST_ARGV_JSON}"
+  case "$TRANSCRIPT_SOURCE" in
+    subs) export GYTE_TRANSCRIPT_SOURCE="subs" ;;
+    whisper) export GYTE_TRANSCRIPT_SOURCE="whisper" ;;
+    *) export GYTE_TRANSCRIPT_SOURCE="none" ;;
+  esac
+  gyte__m_item_manifest_update
+  gyte__m_run_manifest_update
+fi
+
+if [[ ! -s "$DIR/transcript_raw.txt" ]]; then
+  msg="Nessun sottotitolo disponibile (o transcript non valido: log/errore)."
+  echo "ERRORE: $msg" >&2
+  printf '%s\n' "$msg" > "$DIR/transcript_error.txt"
+  log "DONE (transcript=missing, summary=none). Artefatti in: $DIR"
+  exit 3
+fi
+
+reflow_or_promote_raw "$DIR"
+
+if (( _MANIFEST_READY == 1 )); then
+  export GYTE_ITEM_DIR="$DIR"
+  export GYTE_REFLOWED="${_MANIFEST_REFLOWED:-0}"
+  export GYTE_ARGV="${_MANIFEST_ARGV}"
+  export GYTE_ARGV_JSON="${_MANIFEST_ARGV_JSON}"
+  case "$TRANSCRIPT_SOURCE" in
+    subs) export GYTE_TRANSCRIPT_SOURCE="subs" ;;
+    whisper) export GYTE_TRANSCRIPT_SOURCE="whisper" ;;
+    *) export GYTE_TRANSCRIPT_SOURCE="none" ;;
+  esac
+  gyte__m_item_manifest_update
+  gyte__m_run_manifest_update
+fi
+
+if [[ "$AI_MODE" == "off" ]]; then
+  SUMMARY_SOURCE="none"
+  log "DONE (transcript=$TRANSCRIPT_SOURCE, summary=$SUMMARY_SOURCE). Artefatti in: $DIR"
+  exit 0
+fi
+
+SUMMARY_OUT="$DIR/summary.txt"
+
+if [[ "$AI_MODE" == "openai" ]]; then
+  if [[ -n "${OPENAI_API_KEY:-}" ]] && [[ "${OPENAI_API_KEY//[[:space:]]/}" != "" ]]; then
+    txt="$(sed -e 's/\r$//' "$DIR/transcript.txt" | head -c "$MAX_CHARS")"
+    prompt="$(make_openai_prompt "$title" "$url" "$txt")"
+
+    set +e
+    summary_body="$(openai_call "$prompt" 240 2>"$DIR/ai.stderr.txt")"
+    oarc=$?
+    set -e
+
+    if (( oarc == 0 )) && [[ -n "${summary_body:-}" ]]; then
+      SUMMARY_SOURCE="openai"
+      write_summary "$SUMMARY_OUT" "$title" "$summary_body"
+
+      if (( _MANIFEST_READY == 1 )); then
+        export GYTE_ITEM_DIR="$DIR"
+        export GYTE_SUMMARY_SOURCE="openai"
+        export GYTE_STDOUT_SUMMARY_EMITTED="${_MANIFEST_STDOUT_SUMMARY_EMITTED:-1}"
+        export GYTE_ARGV="${_MANIFEST_ARGV}"
+        export GYTE_ARGV_JSON="${_MANIFEST_ARGV_JSON}"
+        gyte__m_item_manifest_update
+        gyte__m_run_manifest_update
+      fi
+
+      log "DONE (transcript=$TRANSCRIPT_SOURCE, summary=$SUMMARY_SOURCE). Artefatti in: $DIR"
+      exit 0
+    fi
+
+    log "openai fallito o vuoto -> fallback a local"
+  else
+    log "OPENAI_API_KEY assente/vuota -> fallback a local"
+  fi
+fi
+
+set +e
+summary_body="$(local_summarize_file "$DIR/transcript.txt" "$BULLETS")"
+lrc=$?
+set -e
+
+if (( lrc != 0 )) || [[ -z "${summary_body:-}" ]]; then
+  rm -f "$SUMMARY_OUT" 2>/dev/null || true
+  SUMMARY_SOURCE="none"
+
+  if (( _MANIFEST_READY == 1 )); then
+    export GYTE_ITEM_DIR="$DIR"
+    export GYTE_SUMMARY_SOURCE="none"
+    export GYTE_STDOUT_SUMMARY_EMITTED="0"
+    export GYTE_ARGV="${_MANIFEST_ARGV}"
+    export GYTE_ARGV_JSON="${_MANIFEST_ARGV_JSON}"
+    gyte__m_item_manifest_update
+    gyte__m_run_manifest_update
+  fi
+
+  log "local summary non disponibile (rc=$lrc)"
+  log "DONE (transcript=$TRANSCRIPT_SOURCE, summary=$SUMMARY_SOURCE). Artefatti in: $DIR"
+  exit 0
+fi
+
+SUMMARY_SOURCE="local"
+write_summary "$SUMMARY_OUT" "$title" "$summary_body"
+
+if (( _MANIFEST_READY == 1 )); then
+  export GYTE_ITEM_DIR="$DIR"
+  export GYTE_SUMMARY_SOURCE="local"
+  export GYTE_STDOUT_SUMMARY_EMITTED="${_MANIFEST_STDOUT_SUMMARY_EMITTED:-1}"
+  export GYTE_ARGV="${_MANIFEST_ARGV}"
+  export GYTE_ARGV_JSON="${_MANIFEST_ARGV_JSON}"
+  gyte__m_item_manifest_update
+  gyte__m_run_manifest_update
+fi
+
+log "DONE (transcript=$TRANSCRIPT_SOURCE, summary=$SUMMARY_SOURCE). Artefatti in: $DIR"
