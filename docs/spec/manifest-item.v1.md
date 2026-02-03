@@ -1,81 +1,44 @@
-# GYTE Manifest Spec — ITEM (v1)
-Questo documento definisce il formato JSON dell’ITEM manifest:
-- Path: `out/<run>/items/<ID>/manifest.json`
-- Deve essere scritto **sempre**, anche in caso di errore.
-- È pensato come API stabile su filesystem (consumo da script/tools).
+# GYTE manifest v1
+Questa spec descrive il **contratto** dei manifest prodotti da `gyte-explain`.
 
-## Schema ID
-- `schema`: `"gyte.manifest.item.v1"` (stringa fissa)
+Obiettivo:
+- rendere l’output filesystem consumabile da script esterni (bash/python)
+- avere uno stato macchina-leggibile anche in caso di errore
+- zero dipendenze esterne: JSON scritto con shell + python stdlib
 
-## Campi (obbligatori)
+I manifest sono **sempre** scritti, anche in caso di errore.
 
-### Identità e configurazione
-- `id` (string) — ID item, tipicamente `"001"` (3 cifre, padded)
-- `title` (string) — titolo del video (come da TSV)
-- `url` (string) — URL (normalizzato a youtube.com quando valido; altrimenti raw)
-- `langs` (array di string) — lingue richieste (es. `["it","en"]`)
-- `ai_mode` (string enum) — `"local" | "openai" | "whisper" | "off"`
+Percorsi:
+- Run: `out/<run>/manifest.json`
+- Item: `out/<run>/items/<ID>/manifest.json`
 
-### Provenienza contenuti
-- `transcript_source` (string enum) — `"subs" | "whisper" | "none"`
-- `summary_source` (string enum) — `"local" | "openai" | "none"`
+## Convenzioni
+- Tutti i path in `paths.*` sono **relativi** alla cartella item: `out/<run>/items/<ID>/`
+- Timestamp in formato ISO-8601 (UTC o local time esplicitato dal producer)
+- Campi sconosciuti possono essere aggiunti in futuro: i consumer devono ignorarli.
 
-### Stato
-- `status` (string enum) — `"ok" | "no_transcript" | "invalid_url" | "error"`
-- `error_message` (string|null) — messaggio breve; `null` se non presente
+Valori enum (v1):
+- `status`: `ok | no_transcript | invalid_url | error`
+- `transcript_source`: `subs | whisper | none`
+- `summary_source`: `local | openai | none`
+- `ai_mode`: `local | openai | whisper | off`
 
-### Paths (relativi alla directory ITEM)
-- `paths` (object, string->string)
-  - `title`: `"title.txt"`
-  - `url`: `"url.txt"`
-  - `langs`: `"langs.txt"`
-  - `row_tsv`: `"row.tsv"`
-  - `transcript`: `"transcript.txt"`
-  - `summary`: `"summary.txt"`
-  - `transcript_error`: `"transcript_error.txt"`
-
-### Timestamp
-- `timestamps` (object)
-  - `created` (string ISO-8601, timezone aware)
-  - `updated` (string ISO-8601, timezone aware)
-
-### Meta
-- `meta` (object)
-  - `exists` (object, string->bool) — presenza reale dei file (best-effort)
-  - `reflowed_transcript` (bool)
-  - `stdout_summary_emitted` (bool)
-  - `inputs.tsv_row_present` (bool)
-
-## Regole di coerenza (soft)
-Queste regole sono consigliate per validatori; non devono bloccare l’esecuzione.
-
-- Se `status == "ok"`:
-  - `transcript_source != "none"`
-  - `paths.transcript` dovrebbe esistere (`meta.exists.transcript == true`)
-- Se `status == "invalid_url"`:
-  - `transcript_source == "none"`
-  - `summary_source == "none"`
-  - `error_message` dovrebbe essere una stringa non vuota
-- Se `status == "no_transcript"`:
-  - `transcript_source == "none"`
-  - `summary_source == "none"`
-  - `error_message` tipicamente `null`
-- Se `ai_mode == "off"`:
-  - `summary_source == "none"`
-
-## Esempio minimale (ok)
+## Item manifest (minimo garantito)
+Esempio schematico:
 ```json
 {
-  "schema": "gyte.manifest.item.v1",
   "id": "001",
-  "title": "Example",
-  "url": "https://www.youtube.com/watch?v=abc123",
-  "langs": ["it", "en"],
+  "title": "…",
+  "url": "https://www.youtube.com/watch?v=…",
+  "langs": ["it","en"],
   "ai_mode": "local",
+
   "transcript_source": "subs",
   "summary_source": "local",
+
   "status": "ok",
   "error_message": null,
+
   "paths": {
     "title": "title.txt",
     "url": "url.txt",
@@ -83,24 +46,106 @@ Queste regole sono consigliate per validatori; non devono bloccare l’esecuzion
     "row_tsv": "row.tsv",
     "transcript": "transcript.txt",
     "summary": "summary.txt",
-    "transcript_error": "transcript_error.txt"
+    "transcript_error": null
   },
+
   "timestamps": {
-    "created": "2026-02-03T13:45:00+01:00",
-    "updated": "2026-02-03T13:45:10+01:00"
+    "created_at": "2026-02-03T12:43:00+01:00",
+    "updated_at": "2026-02-03T12:43:02+01:00"
   },
+
   "meta": {
-    "exists": {
-      "title": true,
-      "url": true,
-      "langs": true,
-      "row_tsv": true,
-      "transcript": true,
-      "summary": true,
-      "transcript_error": false
-    },
-    "reflowed_transcript": true,
-    "stdout_summary_emitted": true,
-    "inputs": {"tsv_row_present": true}
+    "gyte_version": "vX.Y.Z",
+    "producer": "gyte-explain"
   }
 }
+```
+
+## Campi richiesti
+id (string): ID normalizzato (tipicamente 001)
+title (string): titolo (anche se parziale o “best effort”)
+url (string): URL normalizzata
+langs (array<string>): lingue richieste / risolte
+ai_mode (string enum): modalità richiesta
+transcript_source (enum): subs|whisper|none
+summary_source (enum): local|openai|none
+status (enum): ok|no_transcript|invalid_url|error
+error_message (string|null): messaggio umano; può essere null (non bloccare il consumer)
+paths (object): path relativi, valori string o null
+timestamps (object): almeno created_at
+meta (object): almeno producer; gyte_version consigliato
+
+## Semantica status
+ok  
+Transcript presente e (se attivo) summary prodotto.
+
+invalid_url
+URL non valida (non YouTube / malformata). In genere:
+
+transcript_source = none
+
+summary_source = none
+
+paths.transcript_error = "transcript_error.txt"
+
+no_transcript
+Nessun subtitle trovato e whisper non usato. In genere:
+
+transcript_source = none
+
+paths.transcript_error = "transcript_error.txt"
+
+error
+Errore runtime non classificato (es. failure tool esterno). error_message dovrebbe spiegare.
+
+## Run manifest
+Scopo: descrivere “questa run” e gli item processati.
+
+Schematicamente:
+```json
+{
+  "run": {
+    "id": "gyte-explain-20260203-124339",
+    "status": "ok",
+    "started_at": "2026-02-03T12:43:00+01:00",
+    "ended_at": "2026-02-03T12:43:02+01:00",
+    "out_dir": "."
+  },
+  "config": {
+    "argv": ["gyte-explain", "001", "--ai", "local"],
+    "ai_mode": "local",
+    "langs": ["it","en"]
+  },
+  "counts": {
+    "items_total": 1,
+    "ok": 1,
+    "invalid_url": 0,
+    "no_transcript": 0,
+    "error": 0
+  },
+  "items": {
+    "001": {
+      "status": "ok",
+      "item_dir": "items/001"
+    }
+  },
+  "meta": {
+    "gyte_version": "vX.Y.Z",
+    "producer": "gyte-explain"
+  }
+}
+```
+
+## Note
+items può contenere un sottoinsieme di campi; l’item manifest è la fonte completa.
+
+run.status può essere:
+- ok se tutti gli item sono ok
+- error se almeno uno è invalid_url|no_transcript|error (policy a scelta del producer)
+
+## Compatibilità / evoluzione
+v1 è “append-only”: possiamo aggiungere campi senza rompere i consumer.
+
+Se un consumer vuole essere robusto:
+- non assumere che error_message sia sempre stringa non-vuota
+- non assumere che tutti i file in paths.* esistano davvero: verificare su filesystem
