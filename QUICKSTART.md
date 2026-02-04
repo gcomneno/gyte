@@ -1,13 +1,12 @@
 # GYTE
 
-**GYTE** è una collezione di strumenti CLI per costruire una rassegna ragionata di contenuti YouTube
-e trasformarla in **artefatti locali, riproducibili e scriptabili**.
+**GYTE** è una collezione di strumenti CLI per costruire una rassegna ragionata di contenuti YouTube e trasformarla in **artefatti locali, riproducibili e/o automatizzabili**.
 
 Filosofia chiave:
 - strumenti semplici, shell-first
 - **stdout per dati**, **stderr per log**
 - output su filesystem come **API implicita**
-- zero magia, zero dipendenze inutili
+- zero dipendenze inutili
 
 ---
 
@@ -15,15 +14,19 @@ Filosofia chiave:
 
 1) Genera una rassegna (TSV)
 ```bash
-gyte-digest --out ./in/urls.tsv
+gyte-digest
 ```
 
-2) Analizza un item
-gyte-explain 001 --in ./in/urls.tsv --ai local
+2) Analizza un item (senza IA)
+```bash
+gyte-explain 001 --ai local
+```
 
-3) Esplora l’output
+3) Esplora l’output generato
+```bash
 ls out/
 ls out/<run>/items/001/
+```
 
 Troverai:
 - transcript.txt
@@ -32,7 +35,7 @@ Troverai:
 
 ## Struttura dell’output
 Ogni esecuzione di gyte-explain crea una run directory:
-
+```json
 out/<run>/
   manifest.json
   items/
@@ -44,41 +47,43 @@ out/<run>/
       row.tsv
       transcript.txt
       summary.txt
+```
 
-Il filesystem sotto out/ è pensato per essere consumato da script esterni
-(Bash, Python, ecc.).
+Il filesystem sotto `out/` è pensato per essere consumato da script esterni (Bash, Python, ecc..).
 
 ## Documentazione
 
 ### Command reference (consigliato)
-docs/commands/ — documentazione per singolo comando
+`docs/commands/` — documentazione per ogno singolo comando
 
+```text
 gyte-digest
 gyte-explain
 gyte-lint
 gyte-whisper-local
+```
 
 ## Specifiche
-docs/spec/manifest_v1.md — contratto JSON dei manifest
+`docs/spec/manifest_v1.md` — contratto JSON dei manifest
 
 ## Documentazione di progetto
-docs/REPO-TREE-STRUCT.md
-docs/ROADMAP.md
-docs/RELEASE_CHECKLIST_v1.0.md
-docs/SECURITY.md
-docs/THREAT_MODEL.md
+`docs/CHANGELOG.md`
+`docs/SECURITY.md`
+`docs/THREAT_MODEL.md`
 
 ## Installazione
-Vedi:
-install/install-gyte.sh
+Metodo consigliato:
+```bash
+./bin/gyte-install
+```
 
 In alternativa, puoi usare i comandi direttamente da repo (scripts/ o bin/).
 
 ## Qualità e sicurezza
-Lint automatico: gyte-lint
-Validazione output: gyte-lint --manifest
-CI deterministica (no rete obbligatoria)
-Dipendenze AI opzionali e isolate
+- Lint automatico: gyte-lint
+- Validazione output: gyte-lint --manifest
+- CI deterministica (no rete obbligatoria)
+- Dipendenze AI opzionali e isolate
 
 ## Licenza
-Vedi LICENSE.
+Vedi `LICENSE`.
