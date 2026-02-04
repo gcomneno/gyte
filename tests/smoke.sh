@@ -18,6 +18,8 @@ need() {
 need bash
 need mktemp
 need python3
+need find
+need stat
 
 # Ensure scripts exist
 [[ -x "$ROOT/scripts/gyte-lint" ]] || die "missing or not executable: scripts/gyte-lint"
@@ -61,9 +63,34 @@ set -e
 
 ok "gyte-explain invalid_url contract (rc/stdout/stderr) OK"
 
-# 4) Locate last run in OUT_BASE
-RUN="$(ls -1dt "$OUT_BASE"/gyte-explain-* 2>/dev/null | head -n 1 || true)"
-[[ -n "$RUN" ]] || die "cannot find run dir in $OUT_BASE"
+# 4) Locate last run in OUT_BASE (robust: do not rely on directory naming)
+# A "run dir" is identified by:
+# - <run>/manifest.json
+# - <run>/items/001/manifest.json
+best_run=""
+best_mtime=0
+
+while IFS= read -r run_manifest; do
+  run_dir="$(dirname -- "$run_manifest")"
+  [[ -d "$run_dir/items/001" ]] || continue
+  [[ -f "$run_dir/items/001/manifest.json" ]] || continue
+
+  # mtime for "most recent"
+  mtime="$(stat -c %Y -- "$run_dir" 2>/dev/null || echo 0)"
+  if [[ "$mtime" -ge "$best_mtime" ]]; then
+    best_mtime="$mtime"
+    best_run="$run_dir"
+  fi
+done < <(find "$OUT_BASE" -maxdepth 3 -type f -name "manifest.json" 2>/dev/null || true)
+
+RUN="$best_run"
+
+if [[ -z "$RUN" ]]; then
+  echo "[smoke] DEBUG: listing OUT_BASE contents (cannot locate run dir): $OUT_BASE" >&2
+  find "$OUT_BASE" -maxdepth 4 -print >&2 || true
+  die "cannot find run dir in $OUT_BASE"
+fi
+
 [[ -d "$RUN" ]] || die "run is not a directory: $RUN"
 
 ITEM="$RUN/items/001"
