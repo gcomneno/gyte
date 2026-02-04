@@ -2,20 +2,23 @@
 set -euo pipefail
 
 # Uso:
-#   gyte-merge-pl [PLAYLIST_DIR]
+#   gyte-merge-pl [OPZIONI] [PLAYLIST_DIR]
 #
 # Esempi:
-#   # dalla root dove gyte-transcript-pl ha creato la cartella
 #   cd yt-playlist-Towers_of_Hanoi
 #   gyte-merge-pl
 #
-#   # oppure passando esplicitamente la directory
 #   gyte-merge-pl yt-playlist-Towers_of_Hanoi
+#
+#   gyte-merge-pl --dry-run yt-playlist-Towers_of_Hanoi
+#
+#   gyte-merge-pl --out /tmp/towers.merged.txt yt-playlist-Towers_of_Hanoi
+#
+#   gyte-merge-pl --stdout yt-playlist-Towers_of_Hanoi > merged.txt
 #
 # Cosa fa:
 #   - cerca tutti i .txt nella directory della playlist
-#   - li concatena in un unico file:
-#       <PLAYLIST_NAME>.merged.txt
+#   - li concatena in un unico output (file o stdout)
 #   - aggiunge un'intestazione per ogni blocco:
 #       # [N] Titolo video (ID)
 #       # File: filename.txt
@@ -23,133 +26,264 @@ set -euo pipefail
 # Note:
 #   - PLAYLIST_NAME deriva dal nome della directory:
 #       yt-playlist-FOO_BAR  ->  FOO_BAR.merged.txt
-#   - se il parsing di titolo/ID fallisce, usa semplicemente il nome file.
+#   - Se il parsing di titolo/ID fallisce, usa semplicemente il nome file
+#   - Con --no-parse, NON prova proprio a estrarre titolo/ID: usa il filename (senza .txt)
 
 usage() {
-  cat >&2 << 'EOF'
+  cat >&2 <<'EOF'
 Uso:
-  gyte-merge-pl [PLAYLIST_DIR]
+  gyte-merge-pl [OPZIONI] [PLAYLIST_DIR]
+
+OPZIONI:
+  --out FILE      Scrive l'output nel file specificato (path relativo = relativo alla cwd di lancio).
+  --stdout        Scrive su stdout (non crea file).
+  --dry-run       Non scrive nulla; mostra output previsto e ordine dei file.
+  --no-parse      Non fa parsing titolo/ID; usa il filename (senza .txt) come titolo.
+  -h, --help      Mostra questo help.
 
 Esempi:
   cd yt-playlist-Towers_of_Hanoi
   gyte-merge-pl
 
-  gyte-merge-pl yt-playlist-Towers_of_Hanoi
+  gyte-merge-pl --dry-run yt-playlist-Towers_of_Hanoi
+  gyte-merge-pl --out /tmp/towers.merged.txt yt-playlist-Towers_of_Hanoi
+  gyte-merge-pl --stdout yt-playlist-Towers_of_Hanoi > merged.txt
 EOF
 }
 
-# Gestione argomenti:
-# - 0 argomenti      -> usa la directory corrente
-# - 1 argomento      -> directory playlist
-# - -h / --help      -> mostra usage
-# - qualsiasi altro  -> errore esplicito
-if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
-  usage
-  exit 0
-elif [ "$#" -gt 1 ]; then
-  echo "Errore: questo comando accetta al massimo un argomento (PLAYLIST_DIR)." >&2
-  usage
+die() {
+  echo "Errore: $*" >&2
   exit 1
+}
+
+is_abs_path() {
+  case "$1" in
+    /*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+CWD0="$(pwd -P)"
+
+OUT_STDOUT=0
+OUT_FILE=""
+DRY_RUN=0
+NO_PARSE=0
+
+# Parse opzioni + argomento directory
+PLAYLIST_DIR="."
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --stdout)
+      OUT_STDOUT=1
+      shift
+      ;;
+    --out)
+      [[ $# -ge 2 ]] || die "--out richiede un FILE"
+      OUT_FILE="$2"
+      shift 2
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      shift
+      ;;
+    --no-parse)
+      NO_PARSE=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      die "opzione sconosciuta: $1"
+      ;;
+    *)
+      # primo positional = PLAYLIST_DIR
+      if [[ "$PLAYLIST_DIR" != "." ]]; then
+        die "questo comando accetta al massimo un argomento (PLAYLIST_DIR)"
+      fi
+      PLAYLIST_DIR="$1"
+      shift
+      ;;
+  esac
+done
+
+# eventuali altri positional dopo --
+if [[ $# -gt 0 ]]; then
+  if [[ "$PLAYLIST_DIR" != "." ]]; then
+    die "questo comando accetta al massimo un argomento (PLAYLIST_DIR)"
+  fi
+  PLAYLIST_DIR="$1"
+  shift
 fi
 
-PLAYLIST_DIR="${1:-.}"
+if [[ $# -gt 0 ]]; then
+  die "troppi argomenti"
+fi
 
-if [ ! -d "$PLAYLIST_DIR" ]; then
-  echo "Errore: directory playlist non trovata: $PLAYLIST_DIR" >&2
-  exit 1
+if [[ $OUT_STDOUT -eq 1 && -n "$OUT_FILE" ]]; then
+  die "usa SOLO uno tra --stdout e --out FILE"
+fi
+
+if [[ ! -d "$PLAYLIST_DIR" ]]; then
+  die "directory playlist non trovata: $PLAYLIST_DIR"
 fi
 
 # Entra nella directory della playlist, fallendo in modo esplicito se non riesce
 if ! cd "$PLAYLIST_DIR"; then
-  echo "Errore: impossibile entrare nella directory: $PLAYLIST_DIR" >&2
-  exit 1
+  die "impossibile entrare nella directory: $PLAYLIST_DIR"
 fi
 
 # Determina il nome playlist da basename della directory
 dir_name="$(basename "$(pwd)")"
 playlist_name="${dir_name#yt-playlist-}"
-out_file="${playlist_name}.merged.txt"
+
+default_out_file="${playlist_name}.merged.txt"
+
+# Risolvi output target
+if [[ $OUT_STDOUT -eq 1 ]]; then
+  OUT_DESC="stdout"
+elif [[ -n "$OUT_FILE" ]]; then
+  if is_abs_path "$OUT_FILE"; then
+    OUT_FILE_RESOLVED="$OUT_FILE"
+  else
+    OUT_FILE_RESOLVED="$CWD0/$OUT_FILE"
+  fi
+  OUT_DESC="$OUT_FILE_RESOLVED"
+else
+  OUT_FILE_RESOLVED="$(pwd -P)/$default_out_file"
+  OUT_DESC="$default_out_file"
+fi
 
 echo ">> Directory playlist: $(pwd)"
-echo ">> File di output previsto: $out_file"
+echo ">> Output previsto: $OUT_DESC"
+if [[ $DRY_RUN -eq 1 ]]; then
+  echo ">> dry-run: ON"
+fi
+if [[ $NO_PARSE -eq 1 ]]; then
+  echo ">> no-parse: ON"
+fi
 
 # Trova i .txt (transcript) nella directory corrente
 shopt -s nullglob
 txt_files=( *.txt )
 shopt -u nullglob
 
-if [ "${#txt_files[@]}" -eq 0 ]; then
+if [[ "${#txt_files[@]}" -eq 0 ]]; then
   echo "Nessun file .txt trovato in $(pwd)" >&2
   exit 0
 fi
 
-echo ">> Trovati ${#txt_files[@]} file .txt"
-
-# Sovrascrive eventuale file esistente
-: > "$out_file"
-
-# Header generale
-{
-  echo "# Merged transcript per playlist: $playlist_name"
-  echo "# Generato da gyte-merge-pl"
-  echo
-} >> "$out_file"
-
-index=0
-
 # Ordina alfabeticamente i file per poterli avere in ordine stabile
 mapfile -t sorted_files < <(printf '%s\n' "${txt_files[@]}" | sort)
 
+# Escludi il file di merge default (se presente) quando si usa il default.
+# (Se l'utente usa --out/--stdout non sappiamo il nome in dir; comunque non è *.txt di default.)
+filtered_files=()
 for f in "${sorted_files[@]}"; do
-  filename="$f"
-
-  # Evita di re-includere il file di merge, se è già presente nella directory
-  if [ "$filename" = "$out_file" ]; then
-    continue
+  if [[ -z "$OUT_FILE" && $OUT_STDOUT -eq 0 ]]; then
+    if [[ "$f" == "$default_out_file" ]]; then
+      continue
+    fi
   fi
+  filtered_files+=( "$f" )
+done
 
+if [[ "${#filtered_files[@]}" -eq 0 ]]; then
+  echo "Nessun file .txt valido da unire (dopo filtri) in $(pwd)" >&2
+  exit 0
+fi
+
+echo ">> Trovati ${#filtered_files[@]} file .txt"
+
+if [[ $DRY_RUN -eq 1 ]]; then
+  echo ">> Ordine merge:"
+  idx=0
+  for f in "${filtered_files[@]}"; do
+    idx=$((idx + 1))
+    echo "   - [$idx] $f"
+  done
+  exit 0
+fi
+
+# Se non stdout, prepara output file
+OUT_FD=1
+if [[ $OUT_STDOUT -eq 0 ]]; then
+  # crea/sovrascrive
+  exec 3> "$OUT_FILE_RESOLVED"
+  OUT_FD=3
+fi
+
+# Header generale
+{
+  printf '# Merged transcript per playlist: %s\n' "$playlist_name"
+  printf '# Generato da gyte-merge-pl\n'
+  printf '\n'
+} >&"$OUT_FD"
+
+index=0
+for filename in "${filtered_files[@]}"; do
   index=$((index + 1))
 
   base="${filename%.txt}"
 
-  # Prova a pulire suffix lingua (es. .en, .it) se presente
-  no_lang="${base%.*}"
-
-  # Prova a estrarre ID tra parentesi quadre in coda: ... [ID]
-  id_part="$no_lang"
+  header_title="$base"
   video_id=""
-  if [[ "$no_lang" == *"["*"]" ]]; then
-    id_part="${no_lang##*\[}"       # dopo l'ultima [
-    video_id="${id_part%]*}"        # prima della ]
+
+  if [[ $NO_PARSE -eq 0 ]]; then
+    # Prova a pulire suffix lingua (es. .en, .it) se presente
+    no_lang="${base%.*}"
+
+    # Prova a estrarre ID tra parentesi quadre in coda: ... [ID]
+    video_id=""
+    if [[ "$no_lang" == *"["*"]" ]]; then
+      id_part="${no_lang##*\[}"       # dopo l'ultima [
+      video_id="${id_part%]*}"        # prima della ]
+    fi
+
+    # Prova a estrarre il "Titolo video" togliendo uploader e [ID]
+    # Pattern tipico: "Uploader - Titolo [ID]"
+    title_part="$no_lang"
+    # Rimuove " [ID]" finale se presente
+    if [[ "$title_part" == *"["*"]" ]]; then
+      title_part="${title_part% \[*}"
+    fi
+    # Rimuove eventuale "Uploader - " all'inizio
+    if [[ "$title_part" == *" - "* ]]; then
+      title_part="${title_part#*- }"
+    fi
+
+    header_title="$title_part"
   fi
 
-  # Prova a estrarre il "Titolo video" togliendo uploader e [ID]
-  # Pattern tipico: "Uploader - Titolo [ID]"
-  title_part="$no_lang"
-  # Rimuove " [ID]" finale se presente
-  if [[ "$title_part" == *"["*"]" ]]; then
-    title_part="${title_part% \[*}"
-  fi
-  # Rimuove eventuale "Uploader - " all'inizio
-  if [[ "$title_part" == *" - "* ]]; then
-    # Prende la parte dopo il primo " - "
-    title_part="${title_part#*- }"
-  fi
-
-  # Costruzione intestazione per il blocco
-  header_title="$title_part"
-  if [ -n "$video_id" ]; then
+  if [[ -n "$video_id" ]]; then
     header_title="$header_title ($video_id)"
   fi
 
   {
-    echo "# [${index}] $header_title"
-    echo "# File: $filename"
-    echo
-    cat "$filename"
-    echo
-    echo
-  } >> "$out_file"
+    printf '# [%s] %s\n' "$index" "$header_title"
+    printf '# File: %s\n' "$filename"
+    printf '\n'
+  } >&"$OUT_FD"
+
+  # Contenuto file
+  cat -- "$filename" >&"$OUT_FD"
+
+  # Spaziatura finale tra blocchi
+  {
+    printf '\n\n'
+  } >&"$OUT_FD"
 done
 
-echo ">> Merge completato: $out_file"
+if [[ $OUT_STDOUT -eq 0 ]]; then
+  exec 3>&-
+  echo ">> Merge completato: $OUT_FILE_RESOLVED"
+else
+  echo ">> Merge completato su stdout" >&2
+fi
