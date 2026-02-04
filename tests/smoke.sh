@@ -26,6 +26,9 @@ need sed
 [[ -x "$ROOT/scripts/gyte-lint" ]] || die "missing or not executable: scripts/gyte-lint"
 [[ -x "$ROOT/scripts/gyte-explain" ]] || die "missing or not executable: scripts/gyte-explain"
 
+# IMPORTANT: make repo commands available in CI (no user-local install).
+export PATH="$ROOT/bin:$ROOT/scripts:$PATH"
+
 ok "repo root: $ROOT"
 
 # 1) Shell lint (shellcheck)
