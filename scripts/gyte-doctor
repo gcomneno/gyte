@@ -1,179 +1,325 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Uso:
-#   gyte-doctor
-#
-# Scopo:
-#   Verificare se l'ambiente è pronto per usare GYTE:
-#   - yt-dlp nel PATH
-#   - ffmpeg nel PATH
-#   - ~/.local/bin incluso nel PATH
-#   - runtime JS opzionale (node/deno) per eventuali feature future
+# GYTE Doctor
+# - Default: output umano
+# - --verbose: include dettagli (path/versioni)
+# - --json: output machine-readable
+# - --strict: qualunque WARN -> exit code 1 (oltre ai MISS essenziali)
 #
 # Exit code:
-#   0 = tutto essenziale OK
-#   1 = manca almeno una dipendenza essenziale
-
-print_header() {
-  echo "GYTE Doctor — quick env check"
-  echo "============================="
-  echo
-}
-
-have_cmd() {
-  command -v "$1" >/dev/null 2>&1
-}
-
-print_ok() {
-  # verde se il terminale lo supporta, altrimenti testo normale
-  if [ -t 1 ]; then
-    printf '\033[32m[OK]\033[0m %s\n' "$1"
-  else
-    printf '[OK] %s\n' "$1"
-  fi
-}
-
-print_warn() {
-  if [ -t 1 ]; then
-    printf '\033[33m[WARN]\033[0m %s\n' "$1"
-  else
-    printf '[WARN] %s\n' "$1"
-  fi
-}
-
-print_err() {
-  if [ -t 1 ]; then
-    printf '\033[31m[MISS]\033[0m %s\n' "$1"
-  else
-    printf '[MISS] %s\n' "$1"
-  fi
-}
+# - 0: OK
+# - 1: manca almeno un requisito essenziale, oppure (in strict) esistono warning
 
 usage() {
-  cat >&2 << 'EOF'
-Uso:
-  gyte-doctor
+  cat <<'USAGE'
+GYTE Doctor - diagnostica ambiente per GYTE
 
-Esegue una serie di check sull'ambiente:
-  - yt-dlp nel PATH
-  - ffmpeg nel PATH
-  - ~/.local/bin nel PATH
-  - presenza di node/deno (opzionale, warning soft)
+USO:
+  gyte-doctor [--verbose] [--json] [--strict] [-h|--help]
 
-Exit code:
-  0 = dipendenze essenziali OK
-  1 = manca almeno una dipendenza essenziale
-EOF
+OPZIONI:
+  --verbose    Mostra dettagli (path e versioni quando disponibili)
+  --json       Output JSON (machine-readable)
+  --strict     In presenza di WARN, exit code = 1 (oltre ai requisiti essenziali)
+  -h, --help   Mostra questo help
+
+EXIT CODE:
+  0: OK
+  1: manca almeno un requisito essenziale, oppure (in strict) ci sono warning
+USAGE
 }
 
-# Gestione argomenti:
-# - nessun argomento -> esecuzione normale
-# - -h / --help      -> mostra usage
-# - qualsiasi altro  -> errore esplicito (niente parametri "magici" ignorati)
-if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
-  usage
-  exit 0
-elif [ "$#" -gt 0 ]; then
-  echo "Errore: questo comando non accetta argomenti (usa -h o --help per l'uso)." >&2
-  usage
-  exit 1
-fi
+MODE="human"   # human|json
+VERBOSE=0
+STRICT=0
 
-print_header
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) MODE="json"; shift ;;
+    --verbose) VERBOSE=1; shift ;;
+    --strict) STRICT=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *)
+      echo "ERRORE: argomento sconosciuto: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+# Resolve repo root from this script location.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
 
 exit_code=0
 
-# 1) yt-dlp
-if have_cmd yt-dlp; then
-  ver="$(yt-dlp --version 2>/dev/null || echo '?')"
-  print_ok "yt-dlp presente (versione: $ver)"
-else
-  print_err "yt-dlp NON trovato nel PATH."
-  echo "      Installa ad es.: pip install yt-dlp, oppure usa il binario standalone." >&2
-  exit_code=1
-fi
+# Collect results for JSON output.
+# Each result is stored as a '|' separated record:
+# name|level(ok|info|warn|miss)|required(0|1)|message|fix
+RESULTS=()
 
-# 2) ffmpeg
-if have_cmd ffmpeg; then
-  # Prima riga: es. "ffmpeg version 6.1.1-..."
-  ver="$(ffmpeg -version 2>/dev/null | head -n1 || echo '?')"
-  print_ok "ffmpeg presente ($ver)"
-else
-  print_err "ffmpeg NON trovato nel PATH."
-  echo "      È richiesto per gyte-audio e gyte-video." >&2
-  exit_code=1
-fi
+add_result() {
+  local name="$1"
+  local level="$2"     # ok|info|warn|miss
+  local required="$3"  # 0|1
+  local message="$4"
+  local fix="${5:-}"
 
-# 2b) Backend STT locale (opzionale)
-# Serve per usare gyte-whisper-local (trascrizione da file locali).
-stt_bin_env="${GYTE_STT_BIN:-}"
-stt_runtime=""
+  RESULTS+=( "${name}|${level}|${required}|${message}|${fix}" )
 
-if [ -n "$stt_bin_env" ]; then
-  if have_cmd "$stt_bin_env"; then
-    stt_runtime="$stt_bin_env"
-    print_ok "Backend STT rilevato via GYTE_STT_BIN: $stt_runtime"
-  else
-    print_warn "GYTE_STT_BIN è impostato ma non trovato nel PATH: $stt_bin_env"
+  # Required misses always fail
+  if [[ "$required" == "1" && "$level" == "miss" ]]; then
+    exit_code=1
   fi
-fi
 
-if [ -z "$stt_runtime" ]; then
-  if have_cmd whisper; then
-    stt_runtime="whisper"
-    print_ok "Backend STT opzionale rilevato: whisper (openai-whisper CLI)"
-  elif have_cmd whisper-cpp; then
-    stt_runtime="whisper-cpp"
-    print_ok "Backend STT opzionale rilevato: whisper-cpp (whisper.cpp)"
-  elif have_cmd whisper-cli; then
-    stt_runtime="whisper-cli"
-    print_ok "Backend STT opzionale rilevato: whisper-cli (whisper.cpp)"
-  elif have_cmd whispercpp; then
-    stt_runtime="whispercpp"
-    print_ok "Backend STT opzionale rilevato: whispercpp (whisper.cpp)"
-  else
-    print_warn "Nessun backend STT trovato (whisper / whisper.cpp). 'gyte-whisper-local' potrebbe non funzionare."
-    print_warn "Suggerimento: installa 'whisper' (openai-whisper CLI) oppure whisper.cpp e/o imposta GYTE_STT_BIN."
+  # In strict mode, any warning fails (required or not)
+  if [[ $STRICT -eq 1 && "$level" == "warn" ]]; then
+    exit_code=1
   fi
-fi
+}
 
-# 3) ~/.local/bin nel PATH
-LOCAL_BIN="${HOME}/.local/bin"
-case ":$PATH:" in
-  *":$LOCAL_BIN:"*)
-    print_ok "${HOME}/.local/bin è nel PATH"
-    ;;
-  *)
-    if [ -d "$LOCAL_BIN" ]; then
-      print_warn "${HOME}/.local/bin esiste ma NON è nel PATH."
-      echo "       Aggiungi qualcosa tipo: export PATH=\"\$HOME/.local/bin:\$PATH\" nel tuo ~/.bashrc o equivalente." >&2
-    else
-      print_warn "${HOME}/.local/bin non esiste ancora."
-      echo "       Verrà creato automaticamente se segui le istruzioni di installazione di GYTE." >&2
+# Human output helpers
+print_human_line() {
+  local icon="$1"; shift
+  printf '%s %s\n' "$icon" "$*"
+}
+
+level_icon() {
+  case "$1" in
+    ok) echo "OK ✅" ;;
+    info) echo "INFO ℹ️" ;;
+    warn) echo "WARN ⚠️" ;;
+    miss) echo "MISS ❌" ;;
+    *) echo "INFO" ;;
+  esac
+}
+
+# JSON helpers (pure bash)
+json_escape() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\t'/\\t}"
+  s="${s//$'\r'/\\r}"
+  printf '%s' "$s"
+}
+
+emit_json() {
+  local overall="ok"
+  [[ $exit_code -ne 0 ]] && overall="fail"
+
+  printf '{'
+  printf '"tool":"%s",' "$(json_escape "gyte-doctor")"
+  printf '"repo_root":"%s",' "$(json_escape "$ROOT")"
+  printf '"status":"%s",' "$(json_escape "$overall")"
+  printf '"exit_code":%s,' "$exit_code"
+  printf '"strict":%s,' "$STRICT"
+  printf '"results":['
+
+  local first=1
+  local rec name level required message fix
+  for rec in "${RESULTS[@]}"; do
+    IFS='|' read -r name level required message fix <<<"$rec"
+
+    [[ $first -eq 1 ]] || printf ','
+    first=0
+
+    printf '{'
+    printf '"name":"%s",' "$(json_escape "$name")"
+    printf '"level":"%s",' "$(json_escape "$level")"
+    printf '"required":%s,' "$required"
+    printf '"message":"%s"' "$(json_escape "$message")"
+    if [[ -n "$fix" ]]; then
+      printf ',"fix":"%s"' "$(json_escape "$fix")"
     fi
-    ;;
-esac
+    printf '}'
+  done
 
-# 4) Runtime JS (opzionale)
-js_runtime=""
-if have_cmd node; then
-  js_runtime="node"
-elif have_cmd deno; then
-  js_runtime="deno"
-fi
+  printf ']'
+  printf '}\n'
+}
 
-if [ -n "$js_runtime" ]; then
-  print_ok "Runtime JS opzionale rilevato: $js_runtime"
+cmd_path() {
+  command -v "$1" 2>/dev/null || true
+}
+
+cmd_version_line() {
+  local cmd="$1"
+  case "$cmd" in
+    python3) python3 --version 2>/dev/null || true ;;
+    jq) jq --version 2>/dev/null || true ;;
+    curl) curl --version 2>/dev/null | head -n 1 || true ;;
+    ffmpeg) ffmpeg -version 2>/dev/null | head -n 1 || true ;;
+    yt-dlp) yt-dlp --version 2>/dev/null || true ;;
+    shellcheck) shellcheck --version 2>/dev/null | head -n 1 || true ;;
+    node) node --version 2>/dev/null || true ;;
+    deno) deno --version 2>/dev/null | head -n 1 || true ;;
+    *) "$cmd" --version 2>/dev/null | head -n 1 || true ;;
+  esac
+}
+
+check_cmd() {
+  local name="$1"
+  local required="$2"      # 0|1
+  local fix="$3"
+
+  local p
+  p="$(cmd_path "$name")"
+  if [[ -n "$p" ]]; then
+    if [[ $VERBOSE -eq 1 ]]; then
+      local v
+      v="$(cmd_version_line "$name")"
+      if [[ -n "$v" ]]; then
+        add_result "$name" "ok" "$required" "$p ($v)"
+      else
+        add_result "$name" "ok" "$required" "$p"
+      fi
+    else
+      add_result "$name" "ok" "$required" "$p"
+    fi
+  else
+    if [[ "$required" == "1" ]]; then
+      add_result "$name" "miss" "$required" "comando richiesto non trovato: $name" "$fix"
+    else
+      add_result "$name" "warn" "$required" "comando opzionale non trovato: $name" "$fix"
+    fi
+  fi
+}
+
+check_executable_file() {
+  local label="$1"
+  local path="$2"
+  local required="$3"   # 0|1
+  local fix="$4"
+
+  if [[ -x "$path" ]]; then
+    add_result "$label" "ok" "$required" "$path"
+  else
+    if [[ "$required" == "1" ]]; then
+      add_result "$label" "miss" "$required" "file richiesto non eseguibile o mancante: $path" "$fix"
+    else
+      add_result "$label" "warn" "$required" "file opzionale non eseguibile o mancante: $path" "$fix"
+    fi
+  fi
+}
+
+path_contains() {
+  local dir="$1"
+  case ":$PATH:" in
+    *":$dir:"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# -----------------------
+# Checks start here
+# -----------------------
+
+add_result "repo_root" "ok" "0" "$ROOT"
+
+check_executable_file "scripts/gyte-explain" "$ROOT/scripts/gyte-explain" 1 "Verifica permessi e che il repo sia completo."
+check_executable_file "scripts/gyte-lint" "$ROOT/scripts/gyte-lint" 1 "Verifica permessi e che il repo sia completo."
+
+# Core dependencies (ESSENZIALI)
+check_cmd "yt-dlp" 1 "Installazione: sudo apt install yt-dlp  (oppure: python3 -m pip install -U yt-dlp)"
+check_cmd "ffmpeg" 1 "Installazione: sudo apt install ffmpeg"
+check_cmd "curl" 1 "Installazione: sudo apt install curl"
+check_cmd "jq" 1 "Installazione: sudo apt install jq"
+check_cmd "python3" 1 "Installazione: sudo apt install python3"
+check_cmd "shellcheck" 1 "Installazione: sudo apt install shellcheck"
+
+# PATH checks
+if path_contains "$HOME/.local/bin"; then
+  add_result "PATH($HOME/.local/bin)" "ok" 0 "$HOME/.local/bin presente nel PATH"
 else
-  print_warn "Nessun runtime JS (node/deno) trovato. Non è obbligatorio, ma potrebbe servire per feature avanzate future."
+  add_result "PATH($HOME/.local/bin)" "warn" 0 "$HOME/.local/bin NON presente nel PATH" "Aggiungi a ~/.profile o ~/.bashrc: export PATH=\"$HOME/.local/bin:\$PATH\""
 fi
+
+# Is a gyte command reachable from PATH?
+if [[ -n "$(cmd_path gyte-explain)" ]]; then
+  add_result "gyte-explain(on PATH)" "ok" 0 "gyte-explain risolvibile da PATH"
+  # If gyte-explain is already on PATH, missing repo PATH is not a problem -> INFO
+  if path_contains "$ROOT/bin" || path_contains "$ROOT/scripts"; then
+    add_result "PATH(repo)" "ok" 0 "bin/ e/o scripts/ del repo sono nel PATH"
+  else
+    add_result "PATH(repo)" "info" 0 "bin/ e scripts/ del repo NON sono nel PATH (ok: stai usando install locale o PATH equivalente)" "Per sessione dev/CI: export PATH=\"$ROOT/bin:$ROOT/scripts:\$PATH\""
+  fi
+else
+  add_result "gyte-explain(on PATH)" "warn" 0 "gyte-explain NON risolvibile da PATH" "Suggerimento: ./bin/gyte-install  (oppure export PATH=\"$ROOT/bin:$ROOT/scripts:\$PATH\")"
+  # If gyte-explain is not on PATH, repo PATH matters -> WARN
+  if path_contains "$ROOT/bin" || path_contains "$ROOT/scripts"; then
+    add_result "PATH(repo)" "ok" 0 "bin/ e/o scripts/ del repo sono nel PATH"
+  else
+    add_result "PATH(repo)" "warn" 0 "bin/ e scripts/ del repo NON sono nel PATH" "Per sessione dev/CI: export PATH=\"$ROOT/bin:$ROOT/scripts:\$PATH\""
+  fi
+fi
+
+# Optional: local STT backend (whisper)
+if [[ -n "${GYTE_STT_BIN:-}" ]]; then
+  if [[ -x "${GYTE_STT_BIN}" ]]; then
+    add_result "GYTE_STT_BIN" "ok" 0 "GYTE_STT_BIN=${GYTE_STT_BIN}"
+  else
+    add_result "GYTE_STT_BIN" "warn" 0 "GYTE_STT_BIN impostato ma non eseguibile: ${GYTE_STT_BIN}" "Correggi GYTE_STT_BIN o installa il binario indicato."
+  fi
+else
+  if [[ -n "$(cmd_path whisper)" ]]; then
+    add_result "whisper" "ok" 0 "trovato: whisper"
+  elif [[ -n "$(cmd_path whisper.cpp)" ]]; then
+    add_result "whisper.cpp" "ok" 0 "trovato: whisper.cpp"
+  elif [[ -n "$(cmd_path faster-whisper)" ]]; then
+    add_result "faster-whisper" "ok" 0 "trovato: faster-whisper"
+  else
+    add_result "STT backend" "warn" 0 "nessun backend STT locale trovato (opzionale)" "Se ti serve trascrizione locale: installa whisper/faster-whisper o imposta GYTE_STT_BIN."
+  fi
+fi
+
+# Optional: node/deno
+check_cmd "node" 0 "Se ti serve tooling JS: installa node (es. sudo apt install nodejs npm)"
+check_cmd "deno" 0 "Se ti serve tooling Deno: vedi https://deno.com/manual@v1.0/getting_started/installation (non essenziale)"
+
+# -----------------------
+# Render output
+# -----------------------
+
+if [[ "$MODE" == "json" ]]; then
+  emit_json
+  exit "$exit_code"
+fi
+
+echo "GYTE Doctor"
+echo "  repo: $ROOT"
+echo
+
+for rec in "${RESULTS[@]}"; do
+  IFS='|' read -r name level required message fix <<<"$rec"
+
+  if [[ "$name" == "repo_root" ]]; then
+    continue
+  fi
+
+  icon="$(level_icon "$level")"
+  if [[ "$required" == "1" ]]; then
+    print_human_line "$icon" "$name (essenziale): $message"
+  else
+    print_human_line "$icon" "$name: $message"
+  fi
+
+  if [[ -n "$fix" && ( "$level" == "miss" || "$level" == "warn" || "$level" == "info" ) ]]; then
+    echo "      Fix: $fix"
+  fi
+done
 
 echo
-if [ "$exit_code" -eq 0 ]; then
-  echo "Tutto pronto per usare GYTE ✅"
+if [[ $exit_code -eq 0 ]]; then
+  echo "Stato: OK ✅"
 else
-  echo "Alcune dipendenze essenziali mancano. Sistema i [MISS] sopra e riprova. ❌" >&2
+  if [[ $STRICT -eq 1 ]]; then
+    echo "Stato: PROBLEMI (strict: warning presenti o requisiti essenziali mancanti) ❌"
+  else
+    echo "Stato: PROBLEMI (manca almeno un requisito essenziale) ❌"
+  fi
 fi
 
 exit "$exit_code"
