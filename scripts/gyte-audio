@@ -1,113 +1,293 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ $# -lt 1 ]; then
-  echo "Uso: $0 URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
-  echo "Esempio: $0 'https://www.youtube.com/watch?v=XXXX'" >&2
-  exit 1
-fi
-
-URL="$1"
-shift
-
-# Sanity check minimo sull'URL
-if [[ "$URL" == -* ]]; then
-  echo "Errore: l'URL non può iniziare con '-' (forse hai invertito ordine argomenti?)." >&2
-  exit 1
-fi
-
-if [[ "$URL" != http://* && "$URL" != https://* ]]; then
-  echo "Errore: URL non valido (deve iniziare con http:// o https://): '$URL'" >&2
-  exit 1
-fi
-
-# Verifica dipendenze di base
-if ! command -v yt-dlp >/dev/null 2>&1; then
-  echo "Errore: 'yt-dlp' non trovato nel PATH. Installalo prima di usare questo script." >&2
-  exit 1
-fi
-
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  echo "ATTENZIONE: 'ffmpeg' non trovato nel PATH. L'estrazione audio potrebbe fallire." >&2
-fi
-
-# Formato e qualità audio
-# Default storici:
-#   - formato: mp3
-#   - qualità: 192K
+# ----------------------------
+# gyte-audio
+# Wrapper hardenizzato per yt-dlp: estrazione audio + conversione (ffmpeg)
 #
-# API "storica" ancora supportata:
-#   AUDIO_FORMAT, AUDIO_QUALITY
-#
-# API GYTE (ha PRIORITÀ se impostata):
-#   GYTE_AUDIO_FORMAT, GYTE_AUDIO_QUALITY
+# Commit 9:
+#   - In modalità --json, il comando diventa automaticamente quiet
+#     (stdout/stderr puliti per piping), senza richiedere --quiet esplicito.
+# ----------------------------
 
-GYTE_AUDIO_FORMAT="${GYTE_AUDIO_FORMAT-}"
-GYTE_AUDIO_QUALITY="${GYTE_AUDIO_QUALITY-}"
-AUDIO_FORMAT_ENV="${AUDIO_FORMAT-}"
-AUDIO_QUALITY_ENV="${AUDIO_QUALITY-}"
+die()  { echo "Errore: $*" >&2; exit 1; }
+warn() { echo "ATTENZIONE: $*" >&2; }
+info() { [ "${QUIET:-0}" -eq 1 ] && return 0; echo ">> $*" >&2; }
+vlog() { [ "${VERBOSE:-0}" -eq 1 ] || return 0; info "$*"; }
 
-# Se GYTE_* è impostato → ha priorità.
-# Altrimenti usa AUDIO_* storici.
-# Altrimenti usa i default (mp3 / 192K).
-if [ -n "$GYTE_AUDIO_FORMAT" ]; then
-  EFFECTIVE_AUDIO_FORMAT="$GYTE_AUDIO_FORMAT"
-elif [ -n "$AUDIO_FORMAT_ENV" ]; then
-  EFFECTIVE_AUDIO_FORMAT="$AUDIO_FORMAT_ENV"
-else
-  EFFECTIVE_AUDIO_FORMAT="mp3"
-fi
+usage() {
+  cat >&2 <<'EOF'
+Uso:
+  gyte-audio [OPZIONI] URL_YOUTUBE [ALTRI_ARG_YT_DLP...]
 
-if [ -n "$GYTE_AUDIO_QUALITY" ]; then
-  EFFECTIVE_AUDIO_QUALITY="$GYTE_AUDIO_QUALITY"
-elif [ -n "$AUDIO_QUALITY_ENV" ]; then
-  EFFECTIVE_AUDIO_QUALITY="$AUDIO_QUALITY_ENV"
-else
-  EFFECTIVE_AUDIO_QUALITY="192K"
-fi
+Doc estesa:
+  docs/gyte-audio.md
 
-echo ">> Audio format  : $EFFECTIVE_AUDIO_FORMAT"
-echo ">> Audio quality : $EFFECTIVE_AUDIO_QUALITY"
+Esempi rapidi:
+  gyte-audio --preset voice --out ./audio URL
+  gyte-audio --no-warnings --print filename --out ./audio URL
+  gyte-audio --dry-run --json --strict --preset hq URL | jq -r '.yt_dlp_cmd_string'
 
-# Normalizzazione minima qualità (es. 192k → 192K)
-case "$EFFECTIVE_AUDIO_QUALITY" in
-  *k) EFFECTIVE_AUDIO_QUALITY="${EFFECTIVE_AUDIO_QUALITY%k}K" ;;
-esac
+Opzioni GYTE:
+  -h, --help
+  --preset NAME              voice|hq|lossless
+  --format FMT
+  --quality Q
+  --playlist / --no-playlist
+  --out DIR
+  --dry-run
+  --json                     (auto-quiet)
+  --print FIELD              filename|title|id|webpage_url
+  --print-template TEMPLATE  template yt-dlp libero
+  --no-warnings
+  --strict
+  --quiet
+  --verbose
 
-# Hardening sugli argomenti extra passati a yt-dlp
-# NON permettiamo opzioni che eseguono comandi o post-processor pericolosi.
-safe_args=()
-while (("$#")); do
-  arg="$1"
-  shift
+Note:
+  - --json implica output pulito (quiet automatico).
+  - --print e --print-template sono mutuamente esclusivi.
+EOF
+}
 
-  case "$arg" in
-    # Exec e hook vari: vietati
-    --exec|--exec=*|\
-    --exec-before-download|--exec-before-download=*|\
-    --exec-after-download|--exec-after-download=*|\
-    --run-postprocessor|--run-postprocessor=*|\
-    --postprocessor-args|--postprocessor-args=* )
-      echo "Errore: opzione yt-dlp non consentita in gyte-audio (potenzialmente pericolosa): $arg" >&2
-      echo "Suggerimento: esegui direttamente 'yt-dlp' se hai davvero bisogno di queste opzioni avanzate." >&2
-      exit 1
-      ;;
-    *)
-      safe_args+=("$arg")
-      ;;
+require_deps() {
+  command -v yt-dlp >/dev/null 2>&1 || die "'yt-dlp' non trovato nel PATH."
+  if ! command -v ffmpeg >/dev/null 2>&1; then
+    warn "'ffmpeg' non trovato nel PATH. L'estrazione audio potrebbe fallire."
+  fi
+}
+
+normalize_quality() {
+  local q="$1"
+  case "$q" in
+    *k) q="${q%k}K" ;;
   esac
-done
+  printf '%s' "$q"
+}
 
-# Nota: serve ffmpeg installato, come per yt-dlp in generale
-# Output template: una riga sola, così shellcheck non impazzisce.
+print_command_quoted() {
+  local -a cmd=("$@")
+  local i
+  for i in "${cmd[@]}"; do printf '%q ' "$i"; done
+  printf '\n'
+}
 
-yt-dlp \
-  --yes-playlist \
-  -f 'bestaudio/best' \
-  -x \
-  --audio-format "$EFFECTIVE_AUDIO_FORMAT" \
-  --audio-quality "$EFFECTIVE_AUDIO_QUALITY" \
-  --no-embed-subs \
-  -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
-  "${safe_args[@]}" \
-  "$URL"
+json_escape() {
+  local s="$1"
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  s=${s//$'\n'/\\n}
+  s=${s//$'\r'/\\r}
+  s=${s//$'\t'/\\t}
+  printf '%s' "$s"
+}
+
+json_bool() { [ "$1" -eq 1 ] && printf 'true' || printf 'false'; }
+
+json_array_from_args() {
+  local first=1
+  printf '['
+  local arg esc
+  for arg in "$@"; do
+    esc="$(json_escape "$arg")"
+    if [ $first -eq 1 ]; then
+      first=0; printf '"%s"' "$esc"
+    else
+      printf ',"%s"' "$esc"
+    fi
+  done
+  printf ']'
+}
+
+emit_json() {
+  local cmd_str
+  cmd_str="$(json_escape "$(print_command_quoted "${yt_cmd[@]}")")"
+
+  printf '{'
+  printf '"url":"%s",' "$(json_escape "$URL")"
+  printf '"preset":"%s",' "$(json_escape "${PRESET-}")"
+  printf '"audio_format":"%s",' "$(json_escape "$EFFECTIVE_AUDIO_FORMAT")"
+  printf '"audio_quality":"%s",' "$(json_escape "$EFFECTIVE_AUDIO_QUALITY")"
+  printf '"playlist":%s,' "$( [ "$PLAYLIST_MODE" = "yes" ] && echo true || echo false )"
+  printf '"strict":%s,' "$(json_bool "$STRICT")"
+  printf '"out_dir":"%s",' "$(json_escape "${OUT_DIR-}")"
+  printf '"print_field":"%s",' "$(json_escape "${PRINT_FIELD-}")"
+  printf '"print_template":"%s",' "$(json_escape "${PRINT_TEMPLATE-}")"
+  printf '"no_warnings":%s,' "$(json_bool "$NO_WARNINGS")"
+  printf '"safe_args_count":%s,' "${#safe_args[@]}"
+  printf '"yt_dlp_cmd_string":"%s",' "$cmd_str"
+  printf '"yt_dlp_cmd_args":'
+  json_array_from_args "${yt_cmd[@]}"
+  printf '}\n'
+}
+
+print_field_to_yt_dlp() {
+  case "$1" in
+    filename|title|id|webpage_url) printf '%s' "$1" ;;
+    *) die "--print FIELD non valido" ;;
+  esac
+}
+
+preset_to_settings() {
+  case "$1" in
+    voice)    printf 'mp3|96K' ;;
+    hq)       printf 'mp3|320K' ;;
+    lossless) printf 'flac|0' ;;
+    *) die "--preset non valido" ;;
+  esac
+}
+
+# ----------------------------
+# Parse args
+# ----------------------------
+URL=""
+PRESET=""
+CLI_FORMAT=""
+CLI_QUALITY=""
+PLAYLIST_MODE="no"
+DRY_RUN=0
+STRICT=0
+QUIET=0
+VERBOSE=0
+JSON=0
+OUT_DIR=""
+PRINT_FIELD=""
+PRINT_TEMPLATE=""
+NO_WARNINGS=0
+
+extra_args=()
+safe_args=()
+
+parse_args() {
+  local arg
+  while (("$#")); do
+    arg="$1"; shift
+    if [ -z "$URL" ]; then
+      case "$arg" in
+        -h|--help) usage; exit 0 ;;
+        --preset) PRESET="$1"; shift ;;
+        --preset=*) PRESET="${arg#--preset=}" ;;
+        --format) CLI_FORMAT="$1"; shift ;;
+        --format=*) CLI_FORMAT="${arg#--format=}" ;;
+        --quality) CLI_QUALITY="$1"; shift ;;
+        --quality=*) CLI_QUALITY="${arg#--quality=}" ;;
+        --playlist) PLAYLIST_MODE="yes" ;;
+        --no-playlist) PLAYLIST_MODE="no" ;;
+        --out) OUT_DIR="$1"; shift ;;
+        --out=*) OUT_DIR="${arg#--out=}" ;;
+        --dry-run) DRY_RUN=1 ;;
+        --json) JSON=1 ;;
+        --print) PRINT_FIELD="$1"; shift ;;
+        --print=*) PRINT_FIELD="${arg#--print=}" ;;
+        --print-template) PRINT_TEMPLATE="$1"; shift ;;
+        --print-template=*) PRINT_TEMPLATE="${arg#--print-template=}" ;;
+        --no-warnings) NO_WARNINGS=1 ;;
+        --strict) STRICT=1 ;;
+        --quiet) QUIET=1 ;;
+        --verbose) VERBOSE=1 ;;
+        --) URL="$1"; shift; break ;;
+        -*) die "Opzione sconosciuta prima dell'URL: $arg" ;;
+        *) URL="$arg" ;;
+      esac
+    else
+      extra_args+=("$arg")
+    fi
+  done
+  while (("$#")); do extra_args+=("$1"); shift; done
+}
+
+filter_safe_args() {
+  safe_args=()
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      --exec*|--run-postprocessor*|--postprocessor-args*)
+        die "Opzione yt-dlp non consentita: $arg" ;;
+      --config-location*)
+        [ "$STRICT" -eq 1 ] && die "Opzione vietata in --strict: $arg"
+        safe_args+=("$arg") ;;
+      *) safe_args+=("$arg") ;;
+    esac
+  done
+}
+
+parse_args "$@"
+
+[ -n "$URL" ] || { usage; exit 1; }
+
+# Commit 9: --json ⇒ quiet automatico
+if [ "$JSON" -eq 1 ]; then
+  QUIET=1
+fi
+
+if [ "$JSON" -eq 1 ] && [ "$DRY_RUN" -ne 1 ]; then
+  die "--json è consentito solo con --dry-run"
+fi
+
+if [ -n "$PRINT_FIELD" ] && [ -n "$PRINT_TEMPLATE" ]; then
+  die "--print e --print-template sono mutuamente esclusivi"
+fi
+
+[ "$QUIET" -eq 1 ] && VERBOSE=0
+
+require_deps
+
+# Preset
+PRESET_FORMAT=""
+PRESET_QUALITY=""
+if [ -n "$PRESET" ]; then
+  pair="$(preset_to_settings "$PRESET")"
+  PRESET_FORMAT="${pair%%|*}"
+  PRESET_QUALITY="${pair#*|}"
+fi
+
+# Compute format / quality
+EFFECTIVE_AUDIO_FORMAT="${CLI_FORMAT:-${PRESET_FORMAT:-${GYTE_AUDIO_FORMAT:-${AUDIO_FORMAT:-mp3}}}}"
+EFFECTIVE_AUDIO_QUALITY="${CLI_QUALITY:-${PRESET_QUALITY:-${GYTE_AUDIO_QUALITY:-${AUDIO_QUALITY:-192K}}}}"
+EFFECTIVE_AUDIO_QUALITY="$(normalize_quality "$EFFECTIVE_AUDIO_QUALITY")"
+
+PLAYLIST_FLAG="--no-playlist"
+[ "$PLAYLIST_MODE" = "yes" ] && PLAYLIST_FLAG="--yes-playlist"
+
+filter_safe_args "${extra_args[@]}"
+
+output_tpl="%(uploader)s - %(title).80s [%(id)s].%(ext)s"
+[ -n "$OUT_DIR" ] && output_tpl="${OUT_DIR%/}/$output_tpl"
+
+yt_cmd=( yt-dlp )
+[ "$STRICT" -eq 1 ] && yt_cmd+=( --ignore-config )
+[ "$NO_WARNINGS" -eq 1 ] && yt_cmd+=( --no-warnings )
+yt_cmd+=( "$PLAYLIST_FLAG" )
+
+if [ -n "$PRINT_FIELD" ] || [ -n "$PRINT_TEMPLATE" ]; then
+  yt_cmd+=( -o "$output_tpl" --no-download )
+  if [ -n "$PRINT_FIELD" ]; then
+    yt_cmd+=( --print "$(print_field_to_yt_dlp "$PRINT_FIELD")" )
+  else
+    yt_cmd+=( --print "$PRINT_TEMPLATE" )
+  fi
+  yt_cmd+=("${safe_args[@]}" "$URL")
+  if [ "$DRY_RUN" -eq 1 ]; then
+    [ "$JSON" -eq 1 ] && emit_json || print_command_quoted "${yt_cmd[@]}"
+    exit 0
+  fi
+  exec "${yt_cmd[@]}"
+fi
+
+yt_cmd+=(
+  -f bestaudio/best
+  -x
+  --audio-format "$EFFECTIVE_AUDIO_FORMAT"
+  --audio-quality "$EFFECTIVE_AUDIO_QUALITY"
+  --no-embed-subs
+  -o "$output_tpl"
+)
+yt_cmd+=("${safe_args[@]}" "$URL")
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  [ "$JSON" -eq 1 ] && emit_json || print_command_quoted "${yt_cmd[@]}"
+  exit 0
+fi
+
+[ -n "$OUT_DIR" ] && mkdir -p -- "$OUT_DIR"
+exec "${yt_cmd[@]}"
