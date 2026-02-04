@@ -20,6 +20,7 @@ need mktemp
 need python3
 need find
 need stat
+need sed
 
 # Ensure scripts exist
 [[ -x "$ROOT/scripts/gyte-lint" ]] || die "missing or not executable: scripts/gyte-lint"
@@ -75,19 +76,32 @@ while IFS= read -r run_manifest; do
   [[ -d "$run_dir/items/001" ]] || continue
   [[ -f "$run_dir/items/001/manifest.json" ]] || continue
 
-  # mtime for "most recent"
   mtime="$(stat -c %Y -- "$run_dir" 2>/dev/null || echo 0)"
   if [[ "$mtime" -ge "$best_mtime" ]]; then
     best_mtime="$mtime"
     best_run="$run_dir"
   fi
-done < <(find "$OUT_BASE" -maxdepth 3 -type f -name "manifest.json" 2>/dev/null || true)
+done < <(find "$OUT_BASE" -maxdepth 4 -type f -name "manifest.json" 2>/dev/null || true)
 
 RUN="$best_run"
 
 if [[ -z "$RUN" ]]; then
-  echo "[smoke] DEBUG: listing OUT_BASE contents (cannot locate run dir): $OUT_BASE" >&2
-  find "$OUT_BASE" -maxdepth 4 -print >&2 || true
+  echo "[smoke] DEBUG: cannot locate run dir under OUT_BASE: $OUT_BASE" >&2
+  echo "[smoke] DEBUG: OUT_BASE listing:" >&2
+  find "$OUT_BASE" -maxdepth 6 -print >&2 || true
+
+  echo "[smoke] DEBUG: gyte-explain stderr (first 200 lines):" >&2
+  sed -n '1,200p' "$STDERR" >&2 || true
+
+  echo "[smoke] DEBUG: gyte-explain stdout (first 200 lines):" >&2
+  sed -n '1,200p' "$STDOUT" >&2 || true
+
+  echo "[smoke] DEBUG: TMPDIR tree (maxdepth 6): $TMPDIR" >&2
+  find "$TMPDIR" -maxdepth 6 -print >&2 || true
+
+  echo "[smoke] DEBUG: searching for manifest.json anywhere under TMPDIR:" >&2
+  find "$TMPDIR" -type f -name "manifest.json" -print >&2 || true
+
   die "cannot find run dir in $OUT_BASE"
 fi
 
@@ -106,7 +120,6 @@ python3 - "$ITEM/manifest.json" <<'PY'
 import json, sys
 p = sys.argv[1]
 m = json.load(open(p, "r", encoding="utf-8"))
-# Minimal required keys
 req = [
   "id","title","url","langs","ai_mode",
   "transcript_source","summary_source","status","error_message",
@@ -119,8 +132,6 @@ if missing:
 assert m["status"] == "invalid_url", m.get("status")
 assert m["transcript_source"] == "none", m.get("transcript_source")
 assert m["summary_source"] == "none", m.get("summary_source")
-# For invalid_url we expect a message (string or null); prefer string, but don't hard-fail if null.
-# We'll just print it for visibility.
 print("status:", m["status"])
 print("error_message:", m["error_message"])
 PY
