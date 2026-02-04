@@ -17,7 +17,6 @@ Basato su [`yt-dlp`](https://github.com/yt-dlp/yt-dlp), con script pensati per c
 ---
 
 ## Requisiti
-
 - Linux / macOS (servono: `bash`, `sed`, `awk`, `xargs`)
 - Python 3 (se usi `yt-dlp` via pip)  
   oppure il binario standalone di `yt-dlp` per Linux
@@ -57,7 +56,6 @@ Basato su [`yt-dlp`](https://github.com/yt-dlp/yt-dlp), con script pensati per c
 ---
 
 ### 🔍 gyte-doctor
-
 Per verificare velocemente se l'ambiente è pronto per usare GYTE:
 
 ```bash
@@ -75,7 +73,6 @@ Ritorna exit code `0` se le dipendenze essenziali sono OK, `1` altrimenti.
 ---
 
 ## Installazione
-
 Clona il repository:
 
 ```bash
@@ -84,7 +81,6 @@ cd gyte
 ```
 
 ### Installazione rapida (script di install)
-
 Dalla root del progetto:
 
 ```bash
@@ -116,7 +112,6 @@ gyte-doctor
 per verificare rapidamente l’ambiente.
 
 ### Installare ffmpeg
-
 GYTE usa `ffmpeg` per:
 - estrarre solo l'audio dai video (`gyte-audio`)
 - unire audio+video nei file (`gyte-video`)
@@ -143,7 +138,6 @@ Su altri sistemi operativi puoi installare **ffmpeg** tramite il gestore di pacc
 ---
 
 ### 🚀 Installazione CLI (user-level, no sudo)
-
 GYTE fornisce una serie di comandi gyte-* accessibili da qualunque directory del sistema.
 L’installazione è locale all’utente, non richiede privilegi elevati e non modifica componenti globali.
 
@@ -222,7 +216,6 @@ YT_TRANSCRIPT_LANGS="en,fr" gyte-transcript 'https://www.youtube.com/watch?v=VID
 In caso di errori temporanei (es. HTTP 429 da YouTube), lo script prova comunque a pulire i `.vtt` eventualmente scaricati.
 
 #### Directory di output
-
 Per default i file vengono creati nella **directory corrente**.
 
 Puoi cambiare la cartella di output in due modi:
@@ -244,7 +237,6 @@ Priorità:
 ---
 
 ### 2. Trascrizioni su playlist — `gyte-transcript-pl`
-
 Pensato per corsi interi / playlist lunghe.
 
 Esempio:
@@ -293,7 +285,6 @@ GYTE_SLEEP_BETWEEN=2 gyte-transcript-pl --no-parallel 'https://www.youtube.com/w
 ---
 
 ### 3. Merge transcript di playlist — `gyte-merge-pl`
-
 Dopo aver generato i transcript di una playlist con `gyte-transcript-pl`, puoi unire tutti i `.txt` in un unico file “merged” ordinato:
 
 ```bash
@@ -322,7 +313,6 @@ Utile per avere un unico “malloppone” di testo per l’intera playlist.
 ---
 
 ### 4. Solo audio — `gyte-audio`
-
 Scarica solo l'audio dei video (o playlist) e lo converte in MP3 (o altro formato supportato da ffmpeg).
 
 Esempio:
@@ -353,7 +343,6 @@ GYTE_AUDIO_FORMAT=opus GYTE_AUDIO_QUALITY=160K gyte-audio 'https://www.youtube.c
 ```
 
 Priorità:
-
 1. `GYTE_AUDIO_FORMAT` / `GYTE_AUDIO_QUALITY`
 2. `AUDIO_FORMAT` / `AUDIO_QUALITY`
 3. default interni dello script (`mp3` / `192K`)
@@ -379,7 +368,6 @@ Caratteristiche:
 - zero sottotitoli / zero embed
 
 #### Formato di output (video)
-
 Puoi cambiare il formato container di output (quando supportato da yt-dlp/ffmpeg) impostando:
 
 ```bash
@@ -397,7 +385,6 @@ gyte-video 'https://www.youtube.com/playlist?list=PLXXXXX'
 ---
 
 ### 6. Reflow testo — `gyte-reflow-text`
-
 Normalizza un `.txt` (ad esempio generato da `gyte-transcript`) in modo “comodo da leggere / diffare / dare in pasto ad AI”.
 
 Di default fa **entrambi**:
@@ -457,7 +444,6 @@ gyte-reflow-text --strict-utf8 /tmp/dirty.txt > /tmp/dirty.clean.txt
 ---
 
 ### 7. Traduzione AI dei transcript — `gyte-translate`
-
 Usa un comando AI esterno (configurato via `GYTE_AI_CMD`) per tradurre i transcript generati da GYTE (`.txt`, `.md`, ecc.).
 
 Esempio:
@@ -477,7 +463,6 @@ Regole di naming default:
 ---
 
 ### 8. Trascrizione locale MP4/audio — `gyte-whisper-local`
-
 `gyte-whisper-local` usa un comando di speech-to-text locale (di default `whisper`) per estrarre transcript da file **locali** (`.mp4`, `.mp3`, ecc.), senza passare da YouTube.
 
 Esempio base:
@@ -567,16 +552,13 @@ out/
 ---
 
 #### RUN manifest — `out/<run>/manifest.json`
-
 Contiene:
-
-* metadati della run
-* configurazione risolta
-* lista item processati
-* conteggi aggregati
+- metadati della run
+- configurazione risolta
+- lista item processati
+- conteggi aggregati
 
 Esempio (ridotto):
-
 ```json
 {
   "schema": "gyte.manifest.run.v1",
@@ -607,20 +589,17 @@ Esempio (ridotto):
 ---
 
 #### ITEM manifest — `out/<run>/items/<ID>/manifest.json`
-
 È **sempre scritto**, anche in caso di errore.
 
 Campi chiave:
-
-* `status`: `ok | no_transcript | invalid_url | error`
-* `transcript_source`: `subs | whisper | none`
-* `summary_source`: `local | openai | none`
-* `error_message`: stringa o `null`
-* `paths`: percorsi relativi agli artefatti
-* `meta.exists`: presenza reale dei file su disco
+- `status`: `ok | no_transcript | invalid_url | error`
+- `transcript_source`: `subs | whisper | none`
+- `summary_source`: `local | openai | none`
+- `error_message`: stringa o `null`
+- `paths`: percorsi relativi agli artefatti
+- `meta.exists`: presenza reale dei file su disco
 
 Esempio (errore URL):
-
 ```json
 {
   "schema": "gyte.manifest.item.v1",
@@ -641,93 +620,51 @@ Esempio (errore URL):
 
 ---
 
-# 2️⃣ RELEASE NOTES — `v1.1.0`
-
-👉 da usare per GitHub Release / tag message
-
 ### ✨ v1.1.0 — Manifest API & determinismo
 
 **Novità principali**
-
-* Aggiunto `manifest.json` **sempre scritto**:
-
+- Aggiunto `manifest.json` **sempre scritto**:
   * uno per RUN
   * uno per ogni ITEM
-* Manifest progettati come **API stabile su filesystem**
-* Stato esplicito per ogni item:
-
+- Manifest progettati come **API stabile su filesystem**
+- Stato esplicito per ogni item:
   * `ok`
   * `no_transcript`
   * `invalid_url`
   * `error`
-* Tracciamento sorgenti:
-
+- Tracciamento sorgenti:
   * transcript: `subs | whisper | none`
   * summary: `local | openai | none`
-* `argv` serializzato come **lista di token** (non stringa)
-* `gyte_version` risolta automaticamente:
-
+- `argv` serializzato come **lista di token** (non stringa)
+- `gyte_version` risolta automaticamente:
   * file `VERSION` → `git describe` → `UNKNOWN`
 
 **Garanzie**
-
-* Nessun cambiamento a:
-
+- Nessun cambiamento a:
   * stdout
   * stderr
   * exit code
-* Nessuna dipendenza aggiuntiva (solo bash + python stdlib)
+- Nessuna dipendenza aggiuntiva (solo bash + python stdlib)
 
 **Perché conta**
-
-* GYTE ora è **script-friendly**, automabile e introspezionabile
-* Il filesystem diventa una API affidabile, non un effetto collaterale
-
----
-
-# 3️⃣ RELEASE_CHECKLIST_v1.1.0 — append
-
-👉 da aggiungere in `docs/RELEASE_CHECKLIST_v1.0.md` oppure nuova v1.1
-
-### ✔ Manifest API
-
-* [ ] `out/<run>/manifest.json` creato sempre
-* [ ] `out/<run>/items/<id>/manifest.json` creato sempre
-* [ ] Caso `rc=0`:
-
-  * status `ok`
-  * transcript_source `subs|whisper`
-  * summary_source coerente
-* [ ] Caso `rc=2`:
-
-  * status `invalid_url`
-  * `error_message` valorizzato
-* [ ] Caso `rc=3`:
-
-  * status `no_transcript`
-  * `error_message = null`
-* [ ] `argv` nel RUN manifest è una **lista**
-* [ ] `gyte_version` valorizzato (git / VERSION / UNKNOWN)
+- GYTE ora è **script-friendly**, automabile e introspezionabile
+- Il filesystem diventa una API affidabile, non un effetto collaterale
 
 ---
 
 ## Modulo AI esterno – `gyte-translate`
-
 `gyte-translate` non contiene nessuna logica di AI “interna`: si limita a prendere un file di testo e a passarlo a un comando esterno che legge da `stdin` e scrive il risultato su `stdout`.
 
 Il comando esterno viene configurato tramite:
-
 ```bash
 export GYTE_AI_CMD='my-ai-wrapper --model gpt4'
 ```
 
 Durante l’esecuzione, GYTE imposta due variabili d’ambiente che il comando può usare:
-
 - `SRC_LANG`    – lingua sorgente (es. `auto`, `it`, `en`)
 - `TARGET_LANG` – lingua di destinazione (es. `en`, `it`, `fr`)
 
 ### Uso base
-
 ```bash
 gyte-translate --to en lecture.it.txt
 # -> legge lecture.it.txt
@@ -736,7 +673,6 @@ gyte-translate --to en lecture.it.txt
 ```
 
 ### Opzioni principali
-
 - `--to, --target-lang LANG`  
   Lingua di destinazione (obbligatoria, oppure via `GYTE_AI_TARGET_LANG`).
 
@@ -751,12 +687,10 @@ gyte-translate --to en lecture.it.txt
   Mostra la configurazione risolta (file, lingue, comando AI) senza eseguire la chiamata.
 
 ### Note su chiavi API e limiti
-
 `gyte-translate` **non** gestisce chiavi API, token, retry, throttling, ecc.  
 Tutta la logica di autenticazione e di gestione errori è a carico del comando configurato in `GYTE_AI_CMD`.
 
 Questo permette di usare:
-
 - wrapper personali,
 - CLI ufficiali di provider,
 - script intermedi che spezzano file troppo lunghi, ecc.
@@ -782,7 +716,6 @@ export GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini'
 ---
 
 ### Esempio: usare `gyte-translate` con OpenAI (`gyte-openai`)
-
 Il repository include un wrapper di riferimento per OpenAI:
 
 - script: `scripts/gyte-openai`
@@ -794,21 +727,19 @@ Il repository include un wrapper di riferimento per OpenAI:
 > - Non committare mai uno `export OPENAI_API_KEY="sk-..."` dentro script versionati.
 
 Prerequisiti:
-
 ```bash
 pip install openai
 export OPENAI_API_KEY="sk-..."   # NON committare mai questa riga
 ```
 
 Poi puoi configurare GYTE così:
-
 ```bash
 export GYTE_AI_CMD='gyte-openai --model gpt-4.1-mini'
+```
 
 # esempio: traduci da italiano a inglese
 gyte-translate --from it --to en sample.it.txt
 # -> produce: sample.en.txt
-```
 
 Se non specifichi `--from`, `gyte-translate` usa `auto` come lingua sorgente (o `GYTE_AI_SOURCE_LANG` se impostata).
 
@@ -821,7 +752,6 @@ SRC_LANG=it TARGET_LANG=en   gyte-openai --model gpt-4.1-mini --dry-run < sample
 ```
 
 Il wrapper:
-
 - legge il testo da **stdin**,
 - usa `SRC_LANG` / `TARGET_LANG` (impostate da `gyte-translate`),
 - chiama il modello OpenAI scelto,
@@ -830,7 +760,6 @@ Il wrapper:
 ---
 
 # Esempi GYTE
-
 La cartella `examples` contiene esempi pratici di utilizzo di GYTE:
 
 - `basic-usage.sh`  
@@ -853,9 +782,7 @@ Questi file sono solo dimostrativi: sostituisci le URL e i nomi file con quelli 
 ---
 
 ## Come impostare la lingua per le trascrizioni
-
 Per impostazione predefinita, `gyte-transcript` usa:
-
 ```bash
 YT_TRANSCRIPT_LANGS="it,en"
 ```
@@ -875,7 +802,6 @@ YT_TRANSCRIPT_LANGS="fr,en" gyte-transcript "https://www.youtube.com/watch?v=VID
 ```
 
 Se vuoi forzare una lingua meno comune (es. tedesco) sapendo che spesso ci sono solo auto–sub:
-
 ```bash
 # Solo tedesco
 YT_TRANSCRIPT_LANGS="de" gyte-transcript "https://www.youtube.com/watch?v=VIDEO_ID"
@@ -921,13 +847,11 @@ Il `.gitignore` protegge il repo da:
   - virtualenv e file `.env` con segreti.
 
 ## ✦ Cosa non fa GYTE (per scelta)
-
 - Non gestisce chiavi API. Le usa solo se già impostate nell’ambiente dell’utente.
 - Non esegue comandi arbitrari forniti all’interno di URL, alias o variabili.
 - Non modifica il sistema dell’utente (no installazioni, no permessi elevati).
 
 ## ✦ Buone pratiche consigliate
-
 - Mantieni `yt-dlp` e `ffmpeg` aggiornati.
 - Non salvare transcript sensibili nelle cartelle versionate.
 - Usa un `.env` locale (ignorato dal repo) per configurare API key.
@@ -936,12 +860,17 @@ Il `.gitignore` protegge il repo da:
 ---
 
 ## Roadmap
+Vedi il file `docs/ROADMAP.md` per i dettagli.
 
-Vedi il file `ROADMAP.md` per i dettagli.
+---
+
+## Specs & Commands
+- `docs/commands/` (comandi)
+- `docs/spec/` (specifiche/manifest)
+- `docs/CHANGELOG.md` (storia versioni)
 
 ---
 
 ## Licenza
-
 Rilasciato sotto licenza MIT.  
 Vedi il file `LICENSE` per i dettagli.
