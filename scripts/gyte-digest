@@ -2,7 +2,7 @@
 set -euo pipefail
 
 DEFAULT_SCAN=8
-DEFAULT_BROWSER="firefox"
+DEFAULT_BROWSER="auto"
 DEFAULT_OUT="./in/urls.tsv"
 
 DEFAULT_TITLE_W=70
@@ -41,7 +41,9 @@ Output (TSV):
 
 Opzioni:
   --scan N        Quanti video prendere (default: 8)
-  --browser NAME  Browser per cookies-from-browser (default: firefox)
+  --browser NAME  Browser per cookies-from-browser (default: auto)
+                 NAME supportati: brave, chrome, chromium, edge, firefox, opera, safari, vivaldi, whale
+                 Speciale: auto (prova in ordine finché trova una sessione YouTube valida)
   --out FILE      File TSV da scrivere (default: ./in/urls.tsv)
   --pretty        Stampa una tabella "carina" su stdout (colonne auto + troncamento). Il TSV viene comunque salvato in --out
   --json          Stampa JSON Lines su stdout (un oggetto per riga). Il TSV viene comunque salvato in --out
@@ -196,7 +198,11 @@ is_supported_browser() {
 }
 
 validate_browser_or_die() {
-  if is_supported_browser "${BROWSER:-}"; then
+  local b="${BROWSER:-}"
+  if [[ "$b" == "auto" ]]; then
+    return 0
+  fi
+  if is_supported_browser "$b"; then
     return 0
   fi
   echo "ERRORE: browser non supportato per --cookies-from-browser: \"$BROWSER\"." >&2
@@ -209,6 +215,20 @@ detect_js_runtime() {
   command -v deno >/dev/null 2>&1 && have_deno=1
 }
 
+print_dry_run_cmd_for_browser() {
+  local b="$1"
+  echo "yt-dlp \\"
+  if (( have_deno )); then
+    echo "  --js-runtimes deno \\"
+  fi
+  echo "  --cookies-from-browser \"$b\" \\"
+  echo "  --extractor-args \"youtube:player_client=web_safari\" \\"
+  echo "  --flat-playlist --skip-download \\"
+  echo "  --playlist-items \"1-$SCAN\" \\"
+  echo "  --print \"%(title)s\\t%(webpage_url)s\" \\"
+  echo "  \"$FEED_URL\""
+}
+
 print_dry_run_and_exit() {
   echo "# gyte-digest --dry-run"
   echo "browser : $BROWSER"
@@ -216,16 +236,18 @@ print_dry_run_and_exit() {
   echo "feed    : $FEED_URL"
   echo "deno    : $have_deno"
   echo
-  echo "yt-dlp \\"
-  if (( have_deno )); then
-    echo "  --js-runtimes deno \\"
+
+  if [[ "$BROWSER" == "auto" ]]; then
+    local b
+    for b in "${SUPPORTED_BROWSERS[@]}"; do
+      echo "# try browser: $b"
+      print_dry_run_cmd_for_browser "$b"
+      echo
+    done
+    exit 0
   fi
-  echo "  --cookies-from-browser \"$BROWSER\" \\"
-  echo "  --extractor-args \"youtube:player_client=web_safari\" \\"
-  echo "  --flat-playlist --skip-download \\"
-  echo "  --playlist-items \"1-$SCAN\" \\"
-  echo "  --print \"%(title)s\\t%(webpage_url)s\" \\"
-  echo "  \"$FEED_URL\""
+
+  print_dry_run_cmd_for_browser "$BROWSER"
   exit 0
 }
 
@@ -314,6 +336,11 @@ unsupported_browser_hint_if_needed() {
   return 1
 }
 
+ytdlp_err_has_unsupported_browser() {
+  [[ -s "$YTDLP_ERR" ]] || return 1
+  grep -qi 'unsupported browser specified for cookies' "$YTDLP_ERR"
+}
+
 print_ytdlp_error_and_exit() {
   local rc="$1" js_mode="$2"
   if unsupported_browser_hint_if_needed; then exit 1; fi
@@ -342,7 +369,42 @@ print_ytdlp_error_and_exit() {
   exit 1
 }
 
-fetch_with_retry() {
+# Tentativo singolo (con logica deno + fallback): NON fa exit.
+# Ritorna rc:
+#   0 -> comando riuscito (può comunque produrre 0 righe)
+#   2 -> browser non supportato (da stderr yt-dlp)
+#  >0 -> errore serio (caller decide)
+# Side effects: aggiorna TMP/YTDLP_ERR e stampa stderr se VERBOSE=1 (come oggi).
+try_fetch_with_retry_noexit() {
+  local rc=0
+  local js_mode="no-deno"
+
+  if (( have_deno )); then
+    js_mode="deno"
+    if ytdlp_fetch 1; then rc=0; else rc=$?; fi
+
+    if (( rc != 0 )); then
+      if ytdlp_err_has_unsupported_browser; then
+        echo "__JS_MODE__=$js_mode"
+        return 2
+      fi
+      js_mode="fallback-no-deno"
+      if ytdlp_fetch 0; then rc=0; else rc=$?; fi
+    fi
+  else
+    js_mode="no-deno"
+    if ytdlp_fetch 0; then rc=0; else rc=$?; fi
+  fi
+
+  echo "__JS_MODE__=$js_mode"
+  return "$rc"
+}
+
+raw_lines_in_tmp() {
+  awk 'END{print NR}' "$TMP" 2>/dev/null || echo 0
+}
+
+fetch_with_retry_or_die_explicit() {
   local rc=0
   local js_mode="no-deno"
 
@@ -375,7 +437,7 @@ fetch_with_retry() {
   fi
 
   local raw_lines
-  raw_lines="$(awk 'END{print NR}' "$TMP" 2>/dev/null || echo 0)"
+  raw_lines="$(raw_lines_in_tmp)"
   log "yt-dlp ok: js=$js_mode raw_lines=$raw_lines"
 
   if (( raw_lines < 1 )); then
@@ -387,6 +449,62 @@ fetch_with_retry() {
     echo "Hint: quasi sempre NON sei loggato su YouTube nel profilo del browser indicato, oppure yt-dlp non riesce a leggere i cookie." >&2
     exit 1
   fi
+}
+
+fetch_with_retry_or_die_auto() {
+  local original_browser="$BROWSER"
+  local b
+  local rc=0
+  local js_mode="no-deno"
+
+  for b in "${SUPPORTED_BROWSERS[@]}"; do
+    BROWSER="$b"
+    log "auto-browser: trying $b"
+
+    # Tentativo (no-exit) con deno + fallback
+    local out
+    out="$(try_fetch_with_retry_noexit)"
+    js_mode="${out#*=}"
+
+    rc=$?
+    if (( rc == 2 )); then
+      log "auto-browser: $b -> unsupported (skip)"
+      continue
+    fi
+
+    # Se yt-dlp ha segnalato decrypt problemi, fermiamoci (errore immediato, come richiesto)
+    if cookie_decrypt_hint_if_needed; then
+      [[ -s "$YTDLP_ERR" ]] && {
+        echo "" >&2
+        echo "---- yt-dlp stderr (ultime 30 righe) ----" >&2
+        tail -n 30 "$YTDLP_ERR" >&2 || true
+        echo "----------------------------------------" >&2
+      }
+      exit 1
+    fi
+
+    if (( rc != 0 )); then
+      # Errore serio: non lo nascondiamo dietro "auto"
+      print_ytdlp_error_and_exit "$rc" "$js_mode"
+    fi
+
+    local raw_lines
+    raw_lines="$(raw_lines_in_tmp)"
+    log "auto-browser: $b -> js=$js_mode raw_lines=$raw_lines"
+
+    if (( raw_lines < 1 )); then
+      log "auto-browser: $b -> output vuoto (skip)"
+      continue
+    fi
+
+    log "auto-browser: SUCCESS ($b)"
+    return 0
+  done
+
+  BROWSER="$original_browser"
+  echo "ERRORE: nessun browser con sessione YouTube valida trovato (auto)." >&2
+  echo "Hint: esegui login su YouTube in almeno uno tra: $SUPPORTED_BROWSERS_HINT" >&2
+  exit 1
 }
 
 build_tsv() {
@@ -440,7 +558,13 @@ main() {
 
   ensure_runtime_deps
   prepare_workdir_and_tmp
-  fetch_with_retry
+
+  if [[ "$BROWSER" == "auto" ]]; then
+    fetch_with_retry_or_die_auto
+  else
+    fetch_with_retry_or_die_explicit
+  fi
+
   build_tsv
   emit_stdout
 }
