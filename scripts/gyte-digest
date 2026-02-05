@@ -215,6 +215,15 @@ validate_cookies_file_or_die() {
     echo "Hint: esporta/rigenera un cookie file con sessione YouTube valida e riprova." >&2
     exit 1
   fi
+
+  # R7: validazione sessione (cookie "auth-like"), per fallire subito se file anonimo
+  if ! grep -Eqi 'SAPISID|APISID|__Secure-3PAPISID|__Secure-1PAPISID|__Secure-3PSID|__Secure-1PSID|(^|[[:space:]])SID([[:space:]]|$)|(^|[[:space:]])HSID([[:space:]]|$)|(^|[[:space:]])SSID([[:space:]]|$)' "$COOKIES_FILE"; then
+    echo "ERRORE: il file --cookies non contiene una sessione YouTube valida (sembra anonimo): $COOKIES_FILE" >&2
+    echo "Hint: fai login su YouTube e rigenera il file cookies, poi riprova." >&2
+    echo "Esempio (Brave):" >&2
+    echo "  yt-dlp --cookies-from-browser brave --cookies \"$COOKIES_FILE\" --skip-download \"$FEED_URL\" >/dev/null" >&2
+    exit 1
+  fi
 }
 
 is_supported_browser() {
