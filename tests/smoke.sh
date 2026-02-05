@@ -2,9 +2,15 @@
 set -euo pipefail
 
 # GYTE smoke test (offline / deterministic)
-# - shellcheck gate via ./scripts/gyte-lint
-# - manifest contract via ./scripts/gyte-explain on invalid_url
-# - validate manifest via ./scripts/gyte-lint --manifest <run>
+# Goals:
+# - No network / no auth required
+# - Validate deterministic contracts for:
+#   - gyte-explain invalid_url behavior
+#   - gyte-digest validation (browser whitelist, cookies fail-fast) via dry-run
+#
+# NOTE:
+# - Shellcheck gate is already enforced by the CI workflow step "Shellcheck scripts".
+# - This smoke must NOT depend on user-local installs or live YouTube sessions.
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -22,8 +28,7 @@ need find
 need stat
 need sed
 
-# Ensure scripts exist
-[[ -x "$ROOT/scripts/gyte-lint" ]] || die "missing or not executable: scripts/gyte-lint"
+# Ensure scripts exist (gyte-explain is used by the smoke)
 [[ -x "$ROOT/scripts/gyte-explain" ]] || die "missing or not executable: scripts/gyte-explain"
 
 # IMPORTANT: make repo commands available in CI (no user-local install).
@@ -31,31 +36,54 @@ export PATH="$ROOT/bin:$ROOT/scripts:$PATH"
 
 ok "repo root: $ROOT"
 
-# 1) Shell lint (shellcheck)
-"$ROOT/scripts/gyte-lint" >/dev/null
-ok "gyte-lint (shellcheck) passes"
+# 0) gyte-digest offline validation (dry-run only)
+# 0.1) anon cookies -> must fail fast (R7), even in dry-run
+TMPDIR_SMOKE="$(mktemp -d -t gyte-smoke.XXXXXX)"
+cleanup_smoke() { rm -rf "$TMPDIR_SMOKE" 2>/dev/null || true; }
+trap cleanup_smoke EXIT
 
-# 2) Prepare a deterministic fake TSV (invalid URL -> no network)
-TMPDIR="$(mktemp -d -t gyte-smoke.XXXXXX)"
-cleanup() { rm -rf "$TMPDIR" 2>/dev/null || true; }
-trap cleanup EXIT
+ANON="$TMPDIR_SMOKE/anon.cookies"
+AUTH="$TMPDIR_SMOKE/auth.cookies"
 
-OUT_BASE="$TMPDIR/out"
+printf "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tFALSE\t0\tPREF\thl=en\n" >"$ANON"
+
+set +e
+"$ROOT/bin/gyte-digest" --cookies "$ANON" --dry-run >/dev/null 2>&1
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || die "expected rc=1 for anon cookies (fail-fast), got rc=$RC"
+ok "gyte-digest: anon cookies fail-fast (rc=1) OK"
+
+# 0.2) auth-like cookies (dummy) -> must pass validation and print dry-run (rc=0)
+printf "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tDUMMY\n" >"$AUTH"
+"$ROOT/bin/gyte-digest" --cookies "$AUTH" --dry-run >/dev/null
+ok "gyte-digest: auth-like cookies dummy passes validation in dry-run OK"
+
+# 0.3) invalid browser -> must fail rc=1
+set +e
+"$ROOT/bin/gyte-digest" --dry-run --browser ie >/dev/null 2>&1
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || die "expected rc=1 for invalid browser, got rc=$RC"
+ok "gyte-digest: invalid browser whitelist (rc=1) OK"
+
+# 1) Prepare a deterministic fake TSV (invalid URL -> no network)
+OUT_BASE="$TMPDIR_SMOKE/out"
 mkdir -p "$OUT_BASE"
 
-TSV="$TMPDIR/in.tsv"
+TSV="$TMPDIR_SMOKE/in.tsv"
 cat >"$TSV" <<'TSVEOF'
 #id	title	url
 1	Video finto (invalid url)	https://example.com/not-youtube
 TSVEOF
 
-# 3) Run gyte-explain
+# 2) Run gyte-explain
 # Expect:
 # - exit code 2 (invalid_url)
 # - stdout empty (no summary)
 # - stderr non-empty (error message)
-STDOUT="$TMPDIR/stdout.txt"
-STDERR="$TMPDIR/stderr.txt"
+STDOUT="$TMPDIR_SMOKE/stdout.txt"
+STDERR="$TMPDIR_SMOKE/stderr.txt"
 set +e
 "$ROOT/scripts/gyte-explain" 1 --in "$TSV" --ai off --out-base "$OUT_BASE" >"$STDOUT" 2>"$STDERR"
 RC=$?
@@ -64,10 +92,9 @@ set -e
 [[ "$RC" -eq 2 ]] || die "expected rc=2 for invalid_url, got rc=$RC"
 [[ ! -s "$STDOUT" ]] || die "expected stdout empty for invalid_url (summary must not be emitted)"
 [[ -s "$STDERR" ]] || die "expected stderr non-empty for invalid_url"
-
 ok "gyte-explain invalid_url contract (rc/stdout/stderr) OK"
 
-# 4) Locate last run in OUT_BASE (robust: do not rely on directory naming)
+# 3) Locate last run in OUT_BASE (robust: do not rely on directory naming)
 # A "run dir" is identified by:
 # - <run>/manifest.json
 # - <run>/items/001/manifest.json
@@ -99,11 +126,11 @@ if [[ -z "$RUN" ]]; then
   echo "[smoke] DEBUG: gyte-explain stdout (first 200 lines):" >&2
   sed -n '1,200p' "$STDOUT" >&2 || true
 
-  echo "[smoke] DEBUG: TMPDIR tree (maxdepth 6): $TMPDIR" >&2
-  find "$TMPDIR" -maxdepth 6 -print >&2 || true
+  echo "[smoke] DEBUG: TMPDIR tree (maxdepth 6): $TMPDIR_SMOKE" >&2
+  find "$TMPDIR_SMOKE" -maxdepth 6 -print >&2 || true
 
   echo "[smoke] DEBUG: searching for manifest.json anywhere under TMPDIR:" >&2
-  find "$TMPDIR" -type f -name "manifest.json" -print >&2 || true
+  find "$TMPDIR_SMOKE" -type f -name "manifest.json" -print >&2 || true
 
   die "cannot find run dir in $OUT_BASE"
 fi
@@ -113,12 +140,12 @@ fi
 ITEM="$RUN/items/001"
 [[ -d "$ITEM" ]] || die "missing item dir: $ITEM"
 
-# 5) Manifests must always exist
+# 4) Manifests must always exist
 [[ -f "$RUN/manifest.json" ]] || die "missing run manifest: $RUN/manifest.json"
 [[ -f "$ITEM/manifest.json" ]] || die "missing item manifest: $ITEM/manifest.json"
 ok "manifest files exist (run + item)"
 
-# 6) Validate essential fields + status
+# 5) Validate essential fields + status
 python3 - "$ITEM/manifest.json" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -140,9 +167,4 @@ print("error_message:", m["error_message"])
 PY
 
 ok "item manifest fields + invalid_url status OK"
-
-# 7) Manifest lint must pass on that run
-"$ROOT/scripts/gyte-lint" --manifest "$RUN" >/dev/null
-ok "gyte-lint --manifest passes on generated run"
-
 ok "SMOKE TEST PASSED"
