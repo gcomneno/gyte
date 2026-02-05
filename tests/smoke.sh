@@ -64,12 +64,19 @@ set -e
   echo "[smoke] DEBUG: yt-dlp --version:" >&2
   (yt-dlp --version 2>&1 | sed -n '1,5p' >&2) || true
 
-  echo "[smoke] DEBUG: trace gyte-digest (bash -x) --dry-run:" >&2
+  echo "[smoke] DEBUG: trace gyte-digest wrapper (bash -x) --dry-run:" >&2
   set +e
   bash -x "$ROOT/bin/gyte-digest" --dry-run >&2
   TRC=$?
   set -e
-  echo "[smoke] DEBUG: trace rc=$TRC" >&2
+  echo "[smoke] DEBUG: wrapper trace rc=$TRC" >&2
+
+  echo "[smoke] DEBUG: trace scripts/gyte-digest (bash -x) --dry-run:" >&2
+  set +e
+  bash -x "$ROOT/scripts/gyte-digest" --dry-run >&2
+  TRC2=$?
+  set -e
+  echo "[smoke] DEBUG: scripts trace rc=$TRC2" >&2
 
   die "expected rc=0 for plain --dry-run, got rc=$RC"
 }
