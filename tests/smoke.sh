@@ -56,6 +56,21 @@ set -e
   sed -n '1,200p' "$TMPDIR_SMOKE/plain.stdout" >&2 || true
   echo "[smoke] DEBUG: stderr (first 200 lines):" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/plain.stderr" >&2 || true
+
+  echo "[smoke] DEBUG: environment snapshot (minimal):" >&2
+  echo "[smoke] DEBUG: PATH=$PATH" >&2
+  echo "[smoke] DEBUG: which bash: $(command -v bash || true)" >&2
+  echo "[smoke] DEBUG: which yt-dlp: $(command -v yt-dlp || true)" >&2
+  echo "[smoke] DEBUG: yt-dlp --version:" >&2
+  (yt-dlp --version 2>&1 | sed -n '1,5p' >&2) || true
+
+  echo "[smoke] DEBUG: trace gyte-digest (bash -x) --dry-run:" >&2
+  set +e
+  bash -x "$ROOT/bin/gyte-digest" --dry-run >&2
+  TRC=$?
+  set -e
+  echo "[smoke] DEBUG: trace rc=$TRC" >&2
+
   die "expected rc=0 for plain --dry-run, got rc=$RC"
 }
 ok "gyte-digest: plain --dry-run (rc=0) OK"
