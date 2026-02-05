@@ -1,36 +1,35 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# gyte-digest
-# - Fetch dei primi N video dal feed YouTube Subscriptions (via cookies browser)
-# - Output TSV su stdout + salvataggio in ./in/urls.tsv
-# - Colonne: id(001) \t titolo \t url
-# - Header commentato con '#'
-#
-# Uso:
-#   gyte-digest [--scan N] [--browser firefox|chrome|chromium|brave|... ] [--out FILE] [--pretty] [--verbose]
-#
-# Esempi:
-#   gyte-digest
-#   gyte-digest --scan 12
-#   gyte-digest --scan 20 --browser firefox --verbose
-#   gyte-digest --out ./in/mia_rassegna.tsv
-
 DEFAULT_SCAN=8
 DEFAULT_BROWSER="firefox"
 DEFAULT_OUT="./in/urls.tsv"
 
-# Pretty widths (solo per --pretty)
 DEFAULT_TITLE_W=70
 DEFAULT_URL_W=80
 
 VERBOSE=0
 PRETTY=0
+DRY_RUN=0
+JSON=0
+
 SCAN="$DEFAULT_SCAN"
 BROWSER="$DEFAULT_BROWSER"
 OUTFILE="$DEFAULT_OUT"
 TITLE_W="$DEFAULT_TITLE_W"
 URL_W="$DEFAULT_URL_W"
+
+FEED_URL="https://www.youtube.com/feed/subscriptions"
+have_deno=0
+
+TMP=""
+CLEAN_TMP=""
+OUT_TMP=""
+YTDLP_ERR=""
+
+# R4 SSOT: whitelist browser + hint identico (ordine e punteggiatura invariati)
+SUPPORTED_BROWSERS=(brave chrome chromium edge firefox opera safari vivaldi whale)
+SUPPORTED_BROWSERS_HINT="brave, chrome, chromium, edge, firefox, opera, safari, vivaldi, whale"
 
 usage() {
   cat <<'EOF'
@@ -45,6 +44,8 @@ Opzioni:
   --browser NAME  Browser per cookies-from-browser (default: firefox)
   --out FILE      File TSV da scrivere (default: ./in/urls.tsv)
   --pretty        Stampa una tabella "carina" su stdout (colonne auto + troncamento). Il TSV viene comunque salvato in --out
+  --json          Stampa JSON Lines su stdout (un oggetto per riga). Il TSV viene comunque salvato in --out
+  --dry-run       NON esegue yt-dlp: stampa il comando che verrebbe eseguito
   --verbose       Abilita log su stderr
   -h, --help      Mostra questo help
 
@@ -59,31 +60,18 @@ log() { if (( VERBOSE )); then echo "[gyte-digest] $(ts) $*" >&2; fi; }
 die() { echo "ERRORE: $*" >&2; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "comando non trovato: $1"; }
-
 is_int() { [[ "${1:-}" =~ ^[0-9]+$ ]]; }
 
 sanitize_scan() {
   local n="$1"
-  if ! is_int "$n"; then
-    echo "$DEFAULT_SCAN"
-    return 0
-  fi
-  if (( n < 1 )); then
-    echo "$DEFAULT_SCAN"
-    return 0
-  fi
-  if (( n > 200 )); then
-    echo 200
-    return 0
-  fi
+  if ! is_int "$n"; then echo "$DEFAULT_SCAN"; return 0; fi
+  if (( n < 1 )); then echo "$DEFAULT_SCAN"; return 0; fi
+  if (( n > 200 )); then echo 200; return 0; fi
   echo "$n"
 }
 
-# Calcola larghezze pretty in base al terminale (tput cols).
-# Layout riga: "%3s | %-*s | %-*s"
-# Lunghezza totale = 3 + 3 + WT + 3 + WU = WT + WU + 9
 auto_pretty_widths() {
-  local cols min_title min_url overhead max_title max_url
+  local cols overhead min_title min_url max_title max_url
   overhead=9
   min_title=20
   min_url=40
@@ -91,62 +79,39 @@ auto_pretty_widths() {
   max_url=160
 
   cols="$(tput cols 2>/dev/null || true)"
-  if ! is_int "${cols:-}"; then
-    cols=0
-  fi
+  if ! is_int "${cols:-}"; then cols=0; fi
 
-  # Fallback: terminale sconosciuto → default
   if (( cols < 60 )); then
     TITLE_W="$DEFAULT_TITLE_W"
     URL_W="$DEFAULT_URL_W"
     return 0
   fi
 
-  # Preferisci URL abbastanza largo, ma lascia sempre almeno min_title al titolo.
-  # Parto dal default URL e lo adatto a seconda dei cols.
   local url_candidate title_candidate
   url_candidate="$DEFAULT_URL_W"
 
-  # URL non può superare (cols - overhead - min_title)
   local url_max_allowed=$(( cols - overhead - min_title ))
-  if (( url_candidate > url_max_allowed )); then
-    url_candidate="$url_max_allowed"
-  fi
+  if (( url_candidate > url_max_allowed )); then url_candidate="$url_max_allowed"; fi
+  if (( url_candidate < min_url )); then url_candidate="$min_url"; fi
 
-  # URL non può scendere sotto min_url, ma se non ci sta, si sacrifica comunque
-  if (( url_candidate < min_url )); then
-    url_candidate="$min_url"
-  fi
-
-  # Ora ricavo il titolo dallo spazio rimanente
   title_candidate=$(( cols - overhead - url_candidate ))
 
-  # Se il titolo è troppo piccolo, riduco URL finché posso
   if (( title_candidate < min_title )); then
     url_candidate=$(( cols - overhead - min_title ))
-    if (( url_candidate < 10 )); then
-      url_candidate=10
-    fi
+    if (( url_candidate < 10 )); then url_candidate=10; fi
     title_candidate=$(( cols - overhead - url_candidate ))
   fi
 
-  # Clamp max
   if (( title_candidate > max_title )); then title_candidate="$max_title"; fi
   if (( url_candidate > max_url )); then url_candidate="$max_url"; fi
 
   TITLE_W="$title_candidate"
   URL_W="$url_candidate"
-
   log "pretty widths: cols=$cols title_w=$TITLE_W url_w=$URL_W"
 }
 
 pretty_print() {
-  # Stampa su stdout una tabella a colonne fisse (senza perdere il TSV salvato su disco).
-  # Input: file TSV con header commentato "#id\ttitle\turl".
-  local file="$1"
-  local w_title="$2"
-  local w_url="$3"
-
+  local file="$1" w_title="$2" w_url="$3"
   awk -F'\t' -v WT="$w_title" -v WU="$w_url" '
     function trunc(s, w) {
       gsub(/\r$/, "", s);
@@ -157,158 +122,327 @@ pretty_print() {
       return s;
     }
     function rep(ch, n,   i, s) {
-      s="";
-      for (i=0; i<n; i++) s = s ch;
-      return s;
+      s=""; for (i=0; i<n; i++) s = s ch; return s;
     }
-
     BEGIN {
       printf "%3s | %-*s | %-*s\n", "ID", WT, "Titolo", WU, "URL";
       printf "%s-+-%s-+-%s\n", rep("-",3), rep("-",WT), rep("-",WU);
     }
-
-    NR==1 { next }  # salta header TSV (#id ...)
+    NR==1 { next }
     {
-      id=$1; title=$2; url=$3;
-
-      title = trunc(title, WT);
-      url   = trunc(url, WU);
-
-      printf "%3s | %-*s | %-*s\n", id, WT, title, WU, url;
+      printf "%3s | %-*s | %-*s\n", $1, WT, trunc($2, WT), WU, trunc($3, WU);
     }
   ' "$file"
 }
 
-# Parse args
-while (( $# > 0 )); do
-  case "$1" in
-    --scan)
-      (( $# >= 2 )) || die "--scan richiede un numero"
-      SCAN="$(sanitize_scan "$2")"
-      shift 2
-      ;;
-    --scan=*)
-      SCAN="$(sanitize_scan "${1#*=}")"
-      shift
-      ;;
-    --browser)
-      (( $# >= 2 )) || die "--browser richiede un argomento"
-      BROWSER="$2"
-      shift 2
-      ;;
-    --browser=*)
-      BROWSER="${1#*=}"
-      shift
-      ;;
-    --out)
-      (( $# >= 2 )) || die "--out richiede un path"
-      OUTFILE="$2"
-      shift 2
-      ;;
-    --out=*)
-      OUTFILE="${1#*=}"
-      shift
-      ;;
-    --pretty)
-      PRETTY=1
-      shift
-      ;;
-    --verbose)
-      VERBOSE=1
-      shift
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      die "opzione non riconosciuta: $1 (prova --help)"
-      ;;
-  esac
-done
-
-need yt-dlp
-need awk
-need sed
-need head
-need mkdir
-need dirname
-need mktemp
-need tput
-
-mkdir -p "$(dirname "$OUTFILE")"
-
-FEED_URL="https://www.youtube.com/feed/subscriptions"
-log "Auto-fetch: browser=$BROWSER scan=$SCAN -> $OUTFILE (TSV: id<TAB>title<TAB>url)"
-
-TMP="$(mktemp -t gyte-digest.XXXXXX.raw)"
-CLEAN_TMP="$(mktemp -t gyte-digest.clean.XXXXXX.tsv)"
-OUT_TMP="$(mktemp -t gyte-digest.out.XXXXXX.tsv)"
-trap 'rm -f "$TMP" "$CLEAN_TMP" "$OUT_TMP"' EXIT
-
-# --- Fetch: title + url
-# Nota: yt-dlp può stampare "\t" letterale. Lo normalizziamo dopo.
-set +e
-yt-dlp \
-  --cookies-from-browser "$BROWSER" \
-  --js-runtimes deno \
-  --extractor-args "youtube:player_client=web_safari" \
-  --flat-playlist --skip-download \
-  --playlist-items "1-$SCAN" \
-  --print "%(title)s\t%(webpage_url)s" \
-  "$FEED_URL" \
-  >"$TMP" 2>/dev/null
-rc=$?
-set -e
-
-if (( rc != 0 )); then
-  die "yt-dlp non è riuscito a leggere il feed subscriptions (rc=$rc). Prova: --verbose oppure controlla login/cookies del browser."
-fi
-
-# --- Normalizzazione e parsing robusto:
-# 1) converte \t (due char) in TAB reale
-# 2) rimuove CR
-# 3) split su TAB
-# 4) ripulisce tab dentro al titolo (just in case)
-# 5) accetta youtube watch e youtu.be (scarta shorts)
-sed -e $'s/\\\\t/\t/g' -e 's/\r$//' "$TMP" \
-  | awk -F'\t' '
-      BEGIN{OFS="\t"}
-      NF>=2 {
-        title=$1; url=$2;
-
-        gsub(/\t/," ",title);
-        gsub(/[[:space:]]+$/,"",title);
-        gsub(/^[[:space:]]+/,"",title);
-
-        if (title=="" || url=="") next;
-
-        # scarta shorts
-        if (url ~ /\/shorts\//) next;
-
-        # accetta watch e youtu.be
-        if (url ~ /youtube\.com\/watch\?v=/ || url ~ /youtu\.be\//) {
-          print title, url;
-        }
+json_print() {
+  local file="$1"
+  awk -F'\t' '
+    function jesc(s,   out,i,c) {
+      out=""
+      for (i=1; i<=length(s); i++) {
+        c=substr(s,i,1)
+        if (c=="\\") out=out "\\\\"
+        else if (c=="\"") out=out "\\\""
+        else if (c=="\b") out=out "\\b"
+        else if (c=="\f") out=out "\\f"
+        else if (c=="\n") out=out "\\n"
+        else if (c=="\r") out=out "\\r"
+        else if (c=="\t") out=out "\\t"
+        else out=out c
       }
-    ' \
-  >"$CLEAN_TMP"
+      return out
+    }
+    NR==1 { next }
+    {
+      id=$1; title=$2; url=$3
+      printf "{\"id\":\"%s\",\"title\":\"%s\",\"url\":\"%s\"}\n", jesc(id), jesc(title), jesc(url)
+    }
+  ' "$file"
+}
 
-# Header + ID
-awk -F'\t' 'BEGIN{OFS="\t"; print "#id","title","url"} {id=sprintf("%03d", ++n); print id,$1,$2}' \
-  "$CLEAN_TMP" \
-  >"$OUT_TMP"
+parse_args() {
+  while (( $# > 0 )); do
+    case "$1" in
+      --scan) (( $# >= 2 )) || die "--scan richiede un numero"; SCAN="$(sanitize_scan "$2")"; shift 2;;
+      --scan=*) SCAN="$(sanitize_scan "${1#*=}")"; shift;;
+      --browser) (( $# >= 2 )) || die "--browser richiede un argomento"; BROWSER="$2"; shift 2;;
+      --browser=*) BROWSER="${1#*=}"; shift;;
+      --out) (( $# >= 2 )) || die "--out richiede un path"; OUTFILE="$2"; shift 2;;
+      --out=*) OUTFILE="${1#*=}"; shift;;
+      --pretty) PRETTY=1; shift;;
+      --json) JSON=1; shift;;
+      --dry-run) DRY_RUN=1; shift;;
+      --verbose) VERBOSE=1; shift;;
+      -h|--help) usage; exit 0;;
+      *) die "opzione non riconosciuta: $1 (prova --help)";;
+    esac
+  done
+}
 
-lines="$(awk 'END{print NR}' "$OUT_TMP")"
-if (( lines < 2 )); then
-  die "nessun elemento valido trovato nel feed (forse feed vuoto o parsing fallito)."
-fi
+validate_flags() {
+  if (( PRETTY && JSON )); then
+    die "--pretty e --json sono mutuamente esclusivi"
+  fi
+}
 
-mv -f "$OUT_TMP" "$OUTFILE"
+is_supported_browser() {
+  local b="${1:-}"
+  local x
+  for x in "${SUPPORTED_BROWSERS[@]}"; do
+    [[ "$b" == "$x" ]] && return 0
+  done
+  return 1
+}
 
-if (( PRETTY )); then
-  auto_pretty_widths
-  pretty_print "$OUTFILE" "$TITLE_W" "$URL_W"
-else
-  cat "$OUTFILE"
-fi
+validate_browser_or_die() {
+  if is_supported_browser "${BROWSER:-}"; then
+    return 0
+  fi
+  echo "ERRORE: browser non supportato per --cookies-from-browser: \"$BROWSER\"." >&2
+  echo "Hint: usa uno tra: $SUPPORTED_BROWSERS_HINT" >&2
+  exit 1
+}
+
+detect_js_runtime() {
+  have_deno=0
+  command -v deno >/dev/null 2>&1 && have_deno=1
+}
+
+print_dry_run_and_exit() {
+  echo "# gyte-digest --dry-run"
+  echo "browser : $BROWSER"
+  echo "scan    : $SCAN"
+  echo "feed    : $FEED_URL"
+  echo "deno    : $have_deno"
+  echo
+  echo "yt-dlp \\"
+  if (( have_deno )); then
+    echo "  --js-runtimes deno \\"
+  fi
+  echo "  --cookies-from-browser \"$BROWSER\" \\"
+  echo "  --extractor-args \"youtube:player_client=web_safari\" \\"
+  echo "  --flat-playlist --skip-download \\"
+  echo "  --playlist-items \"1-$SCAN\" \\"
+  echo "  --print \"%(title)s\\t%(webpage_url)s\" \\"
+  echo "  \"$FEED_URL\""
+  exit 0
+}
+
+ensure_runtime_deps() {
+  need awk
+  need sed
+  need mkdir
+  need dirname
+  need mktemp
+  need tail
+}
+
+prepare_workdir_and_tmp() {
+  mkdir -p "$(dirname "$OUTFILE")"
+  log "Auto-fetch: browser=$BROWSER scan=$SCAN -> $OUTFILE (TSV: id<TAB>title<TAB>url)"
+
+  TMP="$(mktemp -t gyte-digest.XXXXXX.raw)"
+  CLEAN_TMP="$(mktemp -t gyte-digest.clean.XXXXXX.tsv)"
+  OUT_TMP="$(mktemp -t gyte-digest.out.XXXXXX.tsv)"
+  YTDLP_ERR="$(mktemp -t gyte-digest.ytdlp.XXXXXX.err)"
+  trap 'rm -f "$TMP" "$CLEAN_TMP" "$OUT_TMP" "$YTDLP_ERR"' EXIT
+}
+
+# Esegue un comando e ritorna il suo rc SENZA far scattare `set -e`.
+# Importante: NON stampa nulla; la gestione/log resta nel chiamante.
+run_cmd_capture_rc() {
+  local errexit_was_on=0
+  [[ $- == *e* ]] && errexit_was_on=1
+
+  set +e
+  "$@"
+  local rc=$?
+  (( errexit_was_on )) && set -e
+
+  return "$rc"
+}
+
+ytdlp_fetch() {
+  local use_deno="$1"
+  : >"$YTDLP_ERR"
+
+  local -a args
+  args=(
+    --cookies-from-browser "$BROWSER"
+    --extractor-args "youtube:player_client=web_safari"
+    --flat-playlist --skip-download
+    --playlist-items "1-$SCAN"
+    --print "%(title)s\t%(webpage_url)s"
+    "$FEED_URL"
+  )
+  (( use_deno )) && args=( --js-runtimes deno "${args[@]}" )
+
+  run_cmd_capture_rc yt-dlp "${args[@]}" >"$TMP" 2>"$YTDLP_ERR"
+  local rc=$?
+
+  (( VERBOSE )) && [[ -s "$YTDLP_ERR" ]] && cat "$YTDLP_ERR" >&2
+  return "$rc"
+}
+
+cookie_decrypt_hint_if_needed() {
+  [[ -s "$YTDLP_ERR" ]] || return 1
+  if grep -qi 'secretstorage not available' "$YTDLP_ERR"; then
+    echo "ERRORE: yt-dlp non riesce a decifrare i cookie del browser (manca il modulo Python 'secretstorage')." >&2
+    echo "Fix: installa nel venv usato da yt-dlp:" >&2
+    echo "  pip install secretstorage" >&2
+    echo "Poi rilancia gyte-digest." >&2
+    return 0
+  fi
+  if grep -qi 'failed to decrypt cookie' "$YTDLP_ERR"; then
+    echo "ERRORE: yt-dlp non riesce a decifrare i cookie del browser (cookie cifrati / keyring)." >&2
+    echo "Fix tipico su Linux (Chromium-based):" >&2
+    echo "  pip install secretstorage" >&2
+    echo "Se persiste: verifica keyring/Secret Service (gnome-keyring / kwallet) e profilo/sandbox del browser." >&2
+    return 0
+  fi
+  return 1
+}
+
+unsupported_browser_hint_if_needed() {
+  [[ -s "$YTDLP_ERR" ]] || return 1
+  if grep -qi 'unsupported browser specified for cookies' "$YTDLP_ERR"; then
+    echo "ERRORE: browser non supportato per --cookies-from-browser: \"$BROWSER\"." >&2
+    echo "Hint: usa uno tra: $SUPPORTED_BROWSERS_HINT" >&2
+    return 0
+  fi
+  return 1
+}
+
+print_ytdlp_error_and_exit() {
+  local rc="$1" js_mode="$2"
+  if unsupported_browser_hint_if_needed; then exit 1; fi
+
+  if cookie_decrypt_hint_if_needed; then
+    [[ -s "$YTDLP_ERR" ]] && {
+      echo "" >&2
+      echo "---- yt-dlp stderr (ultime 30 righe) ----" >&2
+      tail -n 30 "$YTDLP_ERR" >&2 || true
+      echo "----------------------------------------" >&2
+    }
+    exit 1
+  fi
+
+  echo "ERRORE: yt-dlp non è riuscito a leggere il feed subscriptions (rc=$rc)." >&2
+  echo "  feed:    $FEED_URL" >&2
+  echo "  browser: $BROWSER" >&2
+  echo "  js:      $js_mode" >&2
+  echo "Hint: controlla login YouTube e lettura cookie (permessi/lock del profilo)." >&2
+  [[ -s "$YTDLP_ERR" ]] && {
+    echo "" >&2
+    echo "---- yt-dlp stderr (ultime 30 righe) ----" >&2
+    tail -n 30 "$YTDLP_ERR" >&2 || true
+    echo "----------------------------------------" >&2
+  }
+  exit 1
+}
+
+fetch_with_retry() {
+  local rc=0
+  local js_mode="no-deno"
+
+  if (( have_deno )); then
+    log "deno trovato: primo tentativo con --js-runtimes deno (fallback automatico se fallisce)"
+    js_mode="deno"
+    if ytdlp_fetch 1; then rc=0; else rc=$?; fi
+
+    if (( rc != 0 )); then
+      if grep -qi 'unsupported browser specified for cookies' "$YTDLP_ERR"; then
+        true
+      else
+        log "primo tentativo (con deno) fallito rc=$rc: retry senza deno"
+        js_mode="fallback-no-deno"
+        if ytdlp_fetch 0; then rc=0; else rc=$?; fi
+      fi
+    fi
+  else
+    log "deno non trovato: eseguo senza --js-runtimes deno"
+    js_mode="no-deno"
+    if ytdlp_fetch 0; then rc=0; else rc=$?; fi
+  fi
+
+  if (( rc != 0 )); then
+    print_ytdlp_error_and_exit "$rc" "$js_mode"
+  fi
+
+  if cookie_decrypt_hint_if_needed; then
+    log "cookie decrypt warning detected"
+  fi
+
+  local raw_lines
+  raw_lines="$(awk 'END{print NR}' "$TMP" 2>/dev/null || echo 0)"
+  log "yt-dlp ok: js=$js_mode raw_lines=$raw_lines"
+
+  if (( raw_lines < 1 )); then
+    if cookie_decrypt_hint_if_needed; then exit 1; fi
+    echo "ERRORE: yt-dlp non ha prodotto alcuna riga dal feed subscriptions (output vuoto)." >&2
+    echo "  feed:    $FEED_URL" >&2
+    echo "  browser: $BROWSER" >&2
+    echo "  js:      $js_mode" >&2
+    echo "Hint: quasi sempre NON sei loggato su YouTube nel profilo del browser indicato, oppure yt-dlp non riesce a leggere i cookie." >&2
+    exit 1
+  fi
+}
+
+build_tsv() {
+  sed -e $'s/\\\\t/\t/g' -e 's/\r$//' "$TMP" \
+    | awk -F'\t' '
+        BEGIN{OFS="\t"}
+        NF>=2 {
+          title=$1; url=$2;
+          gsub(/\t/," ",title);
+          gsub(/[[:space:]]+$/,"",title);
+          gsub(/^[[:space:]]+/,"",title);
+          if (title=="" || url=="") next;
+          if (url ~ /\/shorts\//) next;
+          if (url ~ /youtube\.com\/watch\?v=/ || url ~ /youtu\.be\//) print title, url;
+        }
+      ' >"$CLEAN_TMP"
+
+  awk -F'\t' 'BEGIN{OFS="\t"; print "#id","title","url"} {id=sprintf("%03d", ++n); print id,$1,$2}' \
+    "$CLEAN_TMP" >"$OUT_TMP"
+
+  local lines
+  lines="$(awk 'END{print NR}' "$OUT_TMP")"
+  (( lines >= 2 )) || die "nessun elemento valido trovato nel feed (forse feed vuoto o parsing fallito)."
+
+  mv -f "$OUT_TMP" "$OUTFILE"
+}
+
+emit_stdout() {
+  if (( JSON )); then
+    json_print "$OUTFILE"
+  elif (( PRETTY )); then
+    need tput
+    auto_pretty_widths
+    pretty_print "$OUTFILE" "$TITLE_W" "$URL_W"
+  else
+    cat "$OUTFILE"
+  fi
+}
+
+main() {
+  parse_args "$@"
+  validate_flags
+
+  need yt-dlp
+  validate_browser_or_die
+  detect_js_runtime
+
+  if (( DRY_RUN )); then
+    print_dry_run_and_exit
+  fi
+
+  ensure_runtime_deps
+  prepare_workdir_and_tmp
+  fetch_with_retry
+  build_tsv
+  emit_stdout
+}
+
+main "$@"
