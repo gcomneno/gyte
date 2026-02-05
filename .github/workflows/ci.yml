@@ -56,6 +56,13 @@ jobs:
 
           shellcheck "${shell_files[@]}"
 
+      - name: Install yt-dlp (for smoke dry-run)
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install yt-dlp
+          yt-dlp --version
+
       - name: Smoke test (offline / deterministic)
         run: |
           set -euo pipefail
