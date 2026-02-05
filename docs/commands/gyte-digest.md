@@ -10,12 +10,11 @@ Produce un TSV con colonne:
 Questo TSV è pensato per essere consumato da `gyte-explain`.
 
 ## Uso
-
 ```bash
 gyte-digest [--scan N] [--browser NAME] [--out FILE] [--pretty] [--verbose]
 ```
 
-### Opzioni
+## Opzioni
 --scan N
 Quanti video prendere dal feed (default tipico: 8).
 Viene sanificato: min 1, max 200.
@@ -63,21 +62,49 @@ stderr contiene log solo con --verbose oppure messaggi d’errore.
 - assegna ID progressivi con padding a 3 cifre (001, 002, ...)
 
 ## Esempi
-Generare TSV standard
+Generare TSV standard:
+```bash
 gyte-digest > /tmp/urls.tsv
 head -n 5 /tmp/urls.tsv
+```
 
-Salvare in un file specifico
+Salvare in un file specifico:
+```bash
 gyte-digest --scan 20 --out ./in/mia_rassegna.tsv
+```
 
-Output “pretty” (solo visuale)
+Output “pretty” (solo visuale):
+```bash
 gyte-digest --scan 12 --pretty
+```
 
-Passaggio a gyte-explain
+Passaggio a gyte-explain:
+```bash
 gyte-digest --out ./in/urls.tsv
 gyte-explain 001 --in ./in/urls.tsv --ai local
+```
 
 ## Troubleshooting
-yt-dlp non legge il feed: controlla che il browser sia loggato su YouTube e che --cookies-from-browser funzioni.
-TSV vuoto: feed vuoto o parsing che ha scartato tutto (es. solo shorts).
-pretty widths strane: tput cols non disponibile o terminale non standard; usa output TSV normale.
+- Output vuoto / “raw_lines=0”
+Se gyte-digest dice che l’output di yt-dlp è vuoto (o il TSV risulta vuoto):
+devi essere loggato su YouTube nel browser scelto (--browser)
+
+- se usi profili multipli o browser sandboxati (Flatpak/Snap), yt-dlp può leggere un profilo diverso da quello che usi “a mano”
+Chromium-based (Brave/Chrome/Chromium) su Linux: cookie cifrati
+
+- Se vedi errori tipo:
+secretstorage not available
+failed to decrypt cookie
+
+Allora yt-dlp non riesce a decifrare i cookie via keyring. In genere basta installare nel venv usato da yt-dlp:
+```bash
+pip install secretstorage
+```
+Poi rilancia gyte-digest.
+
+- “unable to extract yt initial data”
+Spesso è una conseguenza: senza cookie validi YouTube serve una pagina “parziale” e l’estrazione fallisce.
+Prima risolvi cookies/login, poi riprova.
+
+- pretty widths strane
+tput cols non disponibile o terminale non standard; usa output TSV normale.
