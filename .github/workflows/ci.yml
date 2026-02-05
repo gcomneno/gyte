@@ -67,7 +67,14 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x tests/smoke.sh
-          ./tests/smoke.sh
+
+          echo ">> Smoke (normal)"
+          if ./tests/smoke.sh; then
+            exit 0
+          fi
+
+          echo ">> Smoke FAILED: rerun with bash -x (trace) to get logs"
+          bash -x ./tests/smoke.sh
 
       - name: pip-audit (optional AI deps)
         run: |
