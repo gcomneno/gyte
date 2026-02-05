@@ -255,7 +255,9 @@ validate_browser_or_die() {
 
 detect_js_runtime() {
   have_deno=0
-  command -v deno >/dev/null 2>&1 && have_deno=1
+  if command -v deno >/dev/null 2>&1; then
+    have_deno=1
+  fi
 }
 
 print_dry_run_cmd_for_browser() {
@@ -587,7 +589,7 @@ fetch_with_retry_or_die_auto() {
 }
 
 build_tsv() {
-  sed -e $'s/\\\\t/\t/g' -e 's/\r$//' "$TMP" \
+  sed -e $'s/\\t/\t/g' -e 's/\r$//' "$TMP" \
     | awk -F'\t' '
         BEGIN{OFS="\t"}
         NF>=2 {
