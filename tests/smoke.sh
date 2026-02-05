@@ -37,7 +37,6 @@ export PATH="$ROOT/bin:$ROOT/scripts:$PATH"
 ok "repo root: $ROOT"
 
 # 0) gyte-digest offline validation (dry-run only)
-# 0.1) anon cookies -> must fail fast (R7), even in dry-run
 TMPDIR_SMOKE="$(mktemp -d -t gyte-smoke.XXXXXX)"
 cleanup_smoke() { rm -rf "$TMPDIR_SMOKE" 2>/dev/null || true; }
 trap cleanup_smoke EXIT
@@ -47,24 +46,50 @@ AUTH="$TMPDIR_SMOKE/auth.cookies"
 
 printf "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tFALSE\t0\tPREF\thl=en\n" >"$ANON"
 
+# 0.1) anon cookies -> must fail fast (R7), even in dry-run
 set +e
-"$ROOT/bin/gyte-digest" --cookies "$ANON" --dry-run >/dev/null 2>&1
+"$ROOT/bin/gyte-digest" --cookies "$ANON" --dry-run >"$TMPDIR_SMOKE/anon.stdout" 2>"$TMPDIR_SMOKE/anon.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 1 ]] || die "expected rc=1 for anon cookies (fail-fast), got rc=$RC"
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: anon cookies stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/anon.stdout" >&2 || true
+  echo "[smoke] DEBUG: anon cookies stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/anon.stderr" >&2 || true
+  die "expected rc=1 for anon cookies (fail-fast), got rc=$RC"
+}
 ok "gyte-digest: anon cookies fail-fast (rc=1) OK"
 
 # 0.2) auth-like cookies (dummy) -> must pass validation and print dry-run (rc=0)
 printf "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tDUMMY\n" >"$AUTH"
-"$ROOT/bin/gyte-digest" --cookies "$AUTH" --dry-run >/dev/null
+
+set +e
+"$ROOT/bin/gyte-digest" --cookies "$AUTH" --dry-run >"$TMPDIR_SMOKE/auth.stdout" 2>"$TMPDIR_SMOKE/auth.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: auth-like cookies (dummy) dry-run failed" >&2
+  echo "[smoke] DEBUG: rc=$RC" >&2
+  echo "[smoke] DEBUG: stdout (first 200 lines):" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/auth.stdout" >&2 || true
+  echo "[smoke] DEBUG: stderr (first 200 lines):" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/auth.stderr" >&2 || true
+  die "expected rc=0 for auth-like cookies dummy dry-run, got rc=$RC"
+}
 ok "gyte-digest: auth-like cookies dummy passes validation in dry-run OK"
 
 # 0.3) invalid browser -> must fail rc=1
 set +e
-"$ROOT/bin/gyte-digest" --dry-run --browser ie >/dev/null 2>&1
+"$ROOT/bin/gyte-digest" --dry-run --browser ie >"$TMPDIR_SMOKE/browser.stdout" 2>"$TMPDIR_SMOKE/browser.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 1 ]] || die "expected rc=1 for invalid browser, got rc=$RC"
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: invalid browser stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/browser.stdout" >&2 || true
+  echo "[smoke] DEBUG: invalid browser stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/browser.stderr" >&2 || true
+  die "expected rc=1 for invalid browser, got rc=$RC"
+}
 ok "gyte-digest: invalid browser whitelist (rc=1) OK"
 
 # 1) Prepare a deterministic fake TSV (invalid URL -> no network)
@@ -95,9 +120,6 @@ set -e
 ok "gyte-explain invalid_url contract (rc/stdout/stderr) OK"
 
 # 3) Locate last run in OUT_BASE (robust: do not rely on directory naming)
-# A "run dir" is identified by:
-# - <run>/manifest.json
-# - <run>/items/001/manifest.json
 best_run=""
 best_mtime=0
 
