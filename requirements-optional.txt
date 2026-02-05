@@ -1,7 +1,10 @@
-# requirements-optional.txt
 # Dipendenze opzionali per l'integrazione AI (gyte-openai)
 openai>=1.0.0,<3.0.0
 
 # STT opzionale per whisper-local fallback (backend: faster-whisper)
 # Nota: serve comunque ffmpeg installato a livello di sistema.
 faster-whisper>=1.2.1,<2.0.0
+
+# Opzionale per gyte-digest su Linux con browser Chromium-based (Brave/Chrome/Chromium):
+# yt-dlp può aver bisogno di decifrare i cookie via keyring (Secret Service).
+secretstorage>=3.3.3,<4.0.0
