@@ -19,6 +19,9 @@ OUTFILE="$DEFAULT_OUT"
 TITLE_W="$DEFAULT_TITLE_W"
 URL_W="$DEFAULT_URL_W"
 
+# R6 tecnico: cookie file (Netscape) con priorità su --browser
+COOKIES_FILE=""
+
 FEED_URL="https://www.youtube.com/feed/subscriptions"
 have_deno=0
 
@@ -40,20 +43,25 @@ Output (TSV):
   001<TAB>...<TAB>https://www.youtube.com/watch?v=...
 
 Opzioni:
-  --scan N        Quanti video prendere (default: 8)
-  --browser NAME  Browser per cookies-from-browser (default: auto)
-                 NAME supportati: brave, chrome, chromium, edge, firefox, opera, safari, vivaldi, whale
-                 Speciale: auto (prova in ordine finché trova una sessione YouTube valida)
-  --out FILE      File TSV da scrivere (default: ./in/urls.tsv)
-  --pretty        Stampa una tabella "carina" su stdout (colonne auto + troncamento). Il TSV viene comunque salvato in --out
-  --json          Stampa JSON Lines su stdout (un oggetto per riga). Il TSV viene comunque salvato in --out
-  --dry-run       NON esegue yt-dlp: stampa il comando che verrebbe eseguito
-  --verbose       Abilita log su stderr
-  -h, --help      Mostra questo help
+  --scan N         Quanti video prendere (default: 8)
+
+  --cookies FILE   Usa un file cookies in formato Netscape (priorità su --browser).
+                   Se presente, gyte-digest usa: yt-dlp --cookies FILE
+
+  --browser NAME   Browser per cookies-from-browser (default: auto)
+                   NAME supportati: brave, chrome, chromium, edge, firefox, opera, safari, vivaldi, whale
+                   Speciale: auto (prova in ordine finché trova una sessione YouTube valida)
+
+  --out FILE       File TSV da scrivere (default: ./in/urls.tsv)
+  --pretty         Stampa una tabella "carina" su stdout (colonne auto + troncamento). Il TSV viene comunque salvato in --out
+  --json           Stampa JSON Lines su stdout (un oggetto per riga). Il TSV viene comunque salvato in --out
+  --dry-run        NON esegue yt-dlp: stampa il comando che verrebbe eseguito
+  --verbose        Abilita log su stderr
+  -h, --help       Mostra questo help
 
 Note:
 - Richiede yt-dlp.
-- Usa cookies dal browser per accedere al feed: https://www.youtube.com/feed/subscriptions
+- Feed: https://www.youtube.com/feed/subscriptions
 EOF
 }
 
@@ -168,10 +176,16 @@ parse_args() {
     case "$1" in
       --scan) (( $# >= 2 )) || die "--scan richiede un numero"; SCAN="$(sanitize_scan "$2")"; shift 2;;
       --scan=*) SCAN="$(sanitize_scan "${1#*=}")"; shift;;
+
+      --cookies) (( $# >= 2 )) || die "--cookies richiede un path"; COOKIES_FILE="$2"; shift 2;;
+      --cookies=*) COOKIES_FILE="${1#*=}"; shift;;
+
       --browser) (( $# >= 2 )) || die "--browser richiede un argomento"; BROWSER="$2"; shift 2;;
       --browser=*) BROWSER="${1#*=}"; shift;;
+
       --out) (( $# >= 2 )) || die "--out richiede un path"; OUTFILE="$2"; shift 2;;
       --out=*) OUTFILE="${1#*=}"; shift;;
+
       --pretty) PRETTY=1; shift;;
       --json) JSON=1; shift;;
       --dry-run) DRY_RUN=1; shift;;
@@ -188,6 +202,21 @@ validate_flags() {
   fi
 }
 
+validate_cookies_file_or_die() {
+  [[ -n "${COOKIES_FILE:-}" ]] || return 0
+
+  if [[ ! -r "$COOKIES_FILE" ]]; then
+    die "--cookies non leggibile o inesistente: $COOKIES_FILE"
+  fi
+
+  # Heuristica minima: evitare file completamente non correlati (es. cookie di altri siti)
+  if ! grep -Eqi 'youtube\.com|google\.com|accounts\.google' "$COOKIES_FILE"; then
+    echo "ERRORE: il file --cookies non sembra contenere cookie Google/YouTube: $COOKIES_FILE" >&2
+    echo "Hint: esporta/rigenera un cookie file con sessione YouTube valida e riprova." >&2
+    exit 1
+  fi
+}
+
 is_supported_browser() {
   local b="${1:-}"
   local x
@@ -198,6 +227,11 @@ is_supported_browser() {
 }
 
 validate_browser_or_die() {
+  # Se uso --cookies, --browser viene ignorato (priorità su cookie file)
+  if [[ -n "${COOKIES_FILE:-}" ]]; then
+    return 0
+  fi
+
   local b="${BROWSER:-}"
   if [[ "$b" == "auto" ]]; then
     return 0
@@ -229,13 +263,33 @@ print_dry_run_cmd_for_browser() {
   echo "  \"$FEED_URL\""
 }
 
+print_dry_run_cmd_for_cookies() {
+  local f="$1"
+  echo "yt-dlp \\"
+  if (( have_deno )); then
+    echo "  --js-runtimes deno \\"
+  fi
+  echo "  --cookies \"$f\" \\"
+  echo "  --extractor-args \"youtube:player_client=web_safari\" \\"
+  echo "  --flat-playlist --skip-download \\"
+  echo "  --playlist-items \"1-$SCAN\" \\"
+  echo "  --print \"%(title)s\\t%(webpage_url)s\" \\"
+  echo "  \"$FEED_URL\""
+}
+
 print_dry_run_and_exit() {
   echo "# gyte-digest --dry-run"
   echo "browser : $BROWSER"
+  echo "cookies : ${COOKIES_FILE:-}"
   echo "scan    : $SCAN"
   echo "feed    : $FEED_URL"
   echo "deno    : $have_deno"
   echo
+
+  if [[ -n "${COOKIES_FILE:-}" ]]; then
+    print_dry_run_cmd_for_cookies "$COOKIES_FILE"
+    exit 0
+  fi
 
   if [[ "$BROWSER" == "auto" ]]; then
     local b
@@ -262,7 +316,7 @@ ensure_runtime_deps() {
 
 prepare_workdir_and_tmp() {
   mkdir -p "$(dirname "$OUTFILE")"
-  log "Auto-fetch: browser=$BROWSER scan=$SCAN -> $OUTFILE (TSV: id<TAB>title<TAB>url)"
+  log "Auto-fetch: browser=$BROWSER cookies=${COOKIES_FILE:-} scan=$SCAN -> $OUTFILE (TSV: id<TAB>title<TAB>url)"
 
   TMP="$(mktemp -t gyte-digest.XXXXXX.raw)"
   CLEAN_TMP="$(mktemp -t gyte-digest.clean.XXXXXX.tsv)"
@@ -290,14 +344,25 @@ ytdlp_fetch() {
   : >"$YTDLP_ERR"
 
   local -a args
-  args=(
-    --cookies-from-browser "$BROWSER"
-    --extractor-args "youtube:player_client=web_safari"
-    --flat-playlist --skip-download
-    --playlist-items "1-$SCAN"
-    --print "%(title)s\t%(webpage_url)s"
-    "$FEED_URL"
-  )
+  if [[ -n "${COOKIES_FILE:-}" ]]; then
+    args=(
+      --cookies "$COOKIES_FILE"
+      --extractor-args "youtube:player_client=web_safari"
+      --flat-playlist --skip-download
+      --playlist-items "1-$SCAN"
+      --print "%(title)s\t%(webpage_url)s"
+      "$FEED_URL"
+    )
+  else
+    args=(
+      --cookies-from-browser "$BROWSER"
+      --extractor-args "youtube:player_client=web_safari"
+      --flat-playlist --skip-download
+      --playlist-items "1-$SCAN"
+      --print "%(title)s\t%(webpage_url)s"
+      "$FEED_URL"
+    )
+  fi
   (( use_deno )) && args=( --js-runtimes deno "${args[@]}" )
 
   run_cmd_capture_rc yt-dlp "${args[@]}" >"$TMP" 2>"$YTDLP_ERR"
@@ -357,7 +422,11 @@ print_ytdlp_error_and_exit() {
 
   echo "ERRORE: yt-dlp non è riuscito a leggere il feed subscriptions (rc=$rc)." >&2
   echo "  feed:    $FEED_URL" >&2
-  echo "  browser: $BROWSER" >&2
+  if [[ -n "${COOKIES_FILE:-}" ]]; then
+    echo "  cookies: $COOKIES_FILE" >&2
+  else
+    echo "  browser: $BROWSER" >&2
+  fi
   echo "  js:      $js_mode" >&2
   echo "Hint: controlla login YouTube e lettura cookie (permessi/lock del profilo)." >&2
   [[ -s "$YTDLP_ERR" ]] && {
@@ -444,7 +513,11 @@ fetch_with_retry_or_die_explicit() {
     if cookie_decrypt_hint_if_needed; then exit 1; fi
     echo "ERRORE: yt-dlp non ha prodotto alcuna riga dal feed subscriptions (output vuoto)." >&2
     echo "  feed:    $FEED_URL" >&2
-    echo "  browser: $BROWSER" >&2
+    if [[ -n "${COOKIES_FILE:-}" ]]; then
+      echo "  cookies: $COOKIES_FILE" >&2
+    else
+      echo "  browser: $BROWSER" >&2
+    fi
     echo "  js:      $js_mode" >&2
     echo "Hint: quasi sempre NON sei loggato su YouTube nel profilo del browser indicato, oppure yt-dlp non riesce a leggere i cookie." >&2
     exit 1
@@ -461,7 +534,6 @@ fetch_with_retry_or_die_auto() {
     BROWSER="$b"
     log "auto-browser: trying $b"
 
-    # Tentativo (no-exit) con deno + fallback
     local out
     out="$(try_fetch_with_retry_noexit)"
     js_mode="${out#*=}"
@@ -472,7 +544,6 @@ fetch_with_retry_or_die_auto() {
       continue
     fi
 
-    # Se yt-dlp ha segnalato decrypt problemi, fermiamoci (errore immediato, come richiesto)
     if cookie_decrypt_hint_if_needed; then
       [[ -s "$YTDLP_ERR" ]] && {
         echo "" >&2
@@ -484,7 +555,6 @@ fetch_with_retry_or_die_auto() {
     fi
 
     if (( rc != 0 )); then
-      # Errore serio: non lo nascondiamo dietro "auto"
       print_ytdlp_error_and_exit "$rc" "$js_mode"
     fi
 
@@ -549,6 +619,7 @@ main() {
   validate_flags
 
   need yt-dlp
+  validate_cookies_file_or_die
   validate_browser_or_die
   detect_js_runtime
 
@@ -559,7 +630,9 @@ main() {
   ensure_runtime_deps
   prepare_workdir_and_tmp
 
-  if [[ "$BROWSER" == "auto" ]]; then
+  if [[ -n "${COOKIES_FILE:-}" ]]; then
+    fetch_with_retry_or_die_explicit
+  elif [[ "$BROWSER" == "auto" ]]; then
     fetch_with_retry_or_die_auto
   else
     fetch_with_retry_or_die_explicit
