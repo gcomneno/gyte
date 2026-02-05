@@ -27,6 +27,8 @@ need python3
 need find
 need stat
 need sed
+need ls
+need grep
 
 # Ensure scripts exist (gyte-explain is used by the smoke)
 [[ -x "$ROOT/scripts/gyte-explain" ]] || die "missing or not executable: scripts/gyte-explain"
@@ -62,6 +64,14 @@ ok "gyte-digest: anon cookies fail-fast (rc=1) OK"
 
 # 0.2) auth-like cookies (dummy) -> must pass validation and print dry-run (rc=0)
 printf "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tDUMMY\n" >"$AUTH"
+
+# R12: print deterministic diagnostics before invoking gyte-digest
+echo "[smoke] DEBUG: AUTH path: $AUTH" >&2
+ls -l "$AUTH" >&2 || true
+echo "[smoke] DEBUG: AUTH first lines:" >&2
+sed -n '1,5p' "$AUTH" >&2 || true
+echo "[smoke] DEBUG: AUTH grep SAPISID:" >&2
+grep -n 'SAPISID' "$AUTH" >&2 || true
 
 set +e
 "$ROOT/bin/gyte-digest" --cookies "$AUTH" --dry-run >"$TMPDIR_SMOKE/auth.stdout" 2>"$TMPDIR_SMOKE/auth.stderr"
