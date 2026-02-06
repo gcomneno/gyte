@@ -10,6 +10,19 @@ Formato:
 
 ---
 
+## v1.2.1 - 2026-02-06
+
+### Added
+- Added `CONTRIBUTING.md` and GitHub issue/PR templates.
+- Added docs for optional dependencies.
+
+### Changed
+- Clarified `scripts/` as source-of-truth; `bin/` is local/generated and not versioned.
+- Versioned `in/urls.example.tsv` and documented input format; `in/urls.tsv` is local/ignored.
+
+### Chore
+- Ignored runtime outputs (`out/`, `temp/`) to keep the repo clean.
+
 ## v1.2.0 — 2026-02-03
 
 ### Highlights
