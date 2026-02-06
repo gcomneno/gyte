@@ -117,3 +117,6 @@ out/
 # *.it.md
 # *.fr.txt
 # *.fr.md
+
+# local inputs
+/in/urls.tsv
