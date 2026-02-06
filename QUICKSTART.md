@@ -12,6 +12,10 @@ Filosofia chiave:
 
 ## Quickstart
 
+### Layout rapido
+- `scripts/` contiene gli entrypoint canonici (source-of-truth).
+- `bin/` è destinata a wrapper/local install (generata o locale) e non è versionata.
+
 1) Genera una rassegna (TSV)
 ```bash
 gyte-digest
