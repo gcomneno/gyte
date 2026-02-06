@@ -11,6 +11,7 @@ Filosofia chiave:
 ---
 
 ## Quickstart
+Optional deps: see [`docs/requirements-optional.md`](docs/requirements-optional.md).
 
 ### Layout rapido
 - `scripts/` contiene gli entrypoint canonici (source-of-truth).
