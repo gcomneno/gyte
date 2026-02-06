@@ -120,3 +120,6 @@ out/
 
 # local inputs
 /in/urls.tsv
+
+# local/generated executables
+/bin/
