@@ -32,6 +32,7 @@ need grep
 
 # Ensure scripts exist (gyte-explain is used by the smoke)
 [[ -x "$ROOT/scripts/gyte-explain" ]] || die "missing or not executable: scripts/gyte-explain"
+[[ -x "$ROOT/scripts/gyte-lint" ]] || die "missing or not executable: scripts/gyte-lint"
 
 # IMPORTANT: make repo commands available in CI (no user-local install).
 export PATH="$ROOT/bin:$ROOT/scripts:$PATH"
@@ -209,4 +210,174 @@ print("error_message:", m["error_message"])
 PY
 
 ok "item manifest fields + invalid_url status OK"
+
+# 6) gyte-lint --manifest deterministic contracts (stdlib only)
+
+# 6.1) --help -> rc=0, stderr empty, stdout contains stable text
+set +e
+"$ROOT/scripts/gyte-lint" --help >"$TMPDIR_SMOKE/lint_help.stdout" 2>"$TMPDIR_SMOKE/lint_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-lint --help, got rc=$RC"
+grep -q "Exit codes" "$TMPDIR_SMOKE/lint_help.stdout" || {
+  echo "[smoke] DEBUG: gyte-lint --help stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_help.stdout" >&2 || true
+  die "expected 'Exit codes' in gyte-lint --help stdout"
+}
+[[ ! -s "$TMPDIR_SMOKE/lint_help.stderr" ]] || {
+  echo "[smoke] DEBUG: gyte-lint --help stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_help.stderr" >&2 || true
+  die "expected empty stderr for gyte-lint --help"
+}
+ok "gyte-lint: --help contract (rc=0, stdout ok, stderr empty) OK"
+
+# 6.2) --manifest with no PATH and no out/ -> rc=1, deterministic stderr
+EMPTY="$TMPDIR_SMOKE/empty"
+mkdir -p "$EMPTY"
+set +e
+(cd "$EMPTY" && "$ROOT/scripts/gyte-lint" --manifest >"$TMPDIR_SMOKE/lint_no_run.stdout" 2>"$TMPDIR_SMOKE/lint_no_run.stderr")
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-lint --manifest (no out/) stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_no_run.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-lint --manifest (no out/) stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_no_run.stderr" >&2 || true
+  die "expected rc=1 for gyte-lint --manifest with no out/, got rc=$RC"
+}
+grep -q "ERRORE: nessuna run trovata" "$TMPDIR_SMOKE/lint_no_run.stderr" || {
+  echo "[smoke] DEBUG: gyte-lint --manifest (no out/) stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_no_run.stderr" >&2 || true
+  die "expected 'nessuna run trovata' in stderr"
+}
+ok "gyte-lint: --manifest no-run operational error contract (rc=1) OK"
+
+# 6.3) --manifest PATH OK/KO fixtures (generated on the fly, deterministic)
+FIX_OK="$TMPDIR_SMOKE/fixture_ok"
+mkdir -p "$FIX_OK/items/001"
+
+cat >"$FIX_OK/manifest.json" <<'JSON'
+{
+  "schema": "gyte.manifest.run.v1",
+  "gyte_version": "0.0.0-test",
+  "run": {
+    "id": "gyte-explain-TEST",
+    "dir": "out/gyte-explain-TEST",
+    "timestamp_start": "1970-01-01T00:00:00Z",
+    "timestamp_end": "1970-01-01T00:00:01Z",
+    "status": "ok"
+  },
+  "config": {
+    "ai_mode": "off",
+    "langs": ["en"],
+    "argv": ["gyte-explain", "--in", "in.tsv", "--ai", "off"]
+  },
+  "counts": {
+    "items_total": 1,
+    "items_ok": 0,
+    "items_error": 0,
+    "items_no_transcript": 0,
+    "items_invalid_url": 1
+  },
+  "items": {
+    "001": { "status": "invalid_url", "path": "items/001/manifest.json" }
+  },
+  "paths": {},
+  "notes": {}
+}
+JSON
+
+cat >"$FIX_OK/items/001/manifest.json" <<'JSON'
+{
+  "schema": "gyte.manifest.item.v1",
+  "id": "001",
+  "title": "Fixture item",
+  "url": "https://example.com/not-youtube",
+  "langs": ["en"],
+  "ai_mode": "off",
+  "transcript_source": "none",
+  "summary_source": "none",
+  "status": "invalid_url",
+  "error_message": "invalid url",
+  "paths": {
+    "transcript": "",
+    "summary": ""
+  },
+  "timestamps": {
+    "created": "1970-01-01T00:00:00Z",
+    "updated": "1970-01-01T00:00:01Z"
+  },
+  "meta": {
+    "exists": null,
+    "reflowed_transcript": false,
+    "stdout_summary_emitted": false
+  }
+}
+JSON
+
+set +e
+"$ROOT/scripts/gyte-lint" --manifest "$FIX_OK" >"$TMPDIR_SMOKE/lint_ok.stdout" 2>"$TMPDIR_SMOKE/lint_ok.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-lint --manifest OK stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_ok.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-lint --manifest OK stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_ok.stderr" >&2 || true
+  die "expected rc=0 for manifest OK fixture, got rc=$RC"
+}
+grep -q "\[OK\] manifest validation passed: warnings=0" "$TMPDIR_SMOKE/lint_ok.stdout" || {
+  echo "[smoke] DEBUG: gyte-lint --manifest OK stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_ok.stdout" >&2 || true
+  die "expected [OK] line with warnings=0 in stdout for OK fixture"
+}
+[[ ! -s "$TMPDIR_SMOKE/lint_ok.stderr" ]] || {
+  echo "[smoke] DEBUG: gyte-lint --manifest OK stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_ok.stderr" >&2 || true
+  die "expected empty stderr for OK fixture"
+}
+ok "gyte-lint: --manifest PATH OK fixture (rc=0, warnings=0) OK"
+
+# KO fixture: same structure, deterministic schema mismatch
+FIX_KO="$TMPDIR_SMOKE/fixture_ko"
+mkdir -p "$FIX_KO/items/001"
+cp -a "$FIX_OK/manifest.json" "$FIX_KO/manifest.json"
+cp -a "$FIX_OK/items/001/manifest.json" "$FIX_KO/items/001/manifest.json"
+
+# Make it invalid deterministically: break item schema
+python3 - "$FIX_KO/items/001/manifest.json" <<'PY'
+import json, sys
+p = sys.argv[1]
+doc = json.load(open(p, 'r', encoding='utf-8'))
+doc['schema'] = 'gyte.manifest.item.v0'
+json.dump(doc, open(p, 'w', encoding='utf-8'), ensure_ascii=False, indent=2)
+PY
+
+set +e
+"$ROOT/scripts/gyte-lint" --manifest "$FIX_KO" >"$TMPDIR_SMOKE/lint_ko.stdout" 2>"$TMPDIR_SMOKE/lint_ko.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || {
+  echo "[smoke] DEBUG: gyte-lint --manifest KO stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_ko.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-lint --manifest KO stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_ko.stderr" >&2 || true
+  die "expected rc=2 for manifest KO fixture, got rc=$RC"
+}
+[[ ! -s "$TMPDIR_SMOKE/lint_ko.stdout" ]] || {
+  echo "[smoke] DEBUG: gyte-lint --manifest KO stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_ko.stdout" >&2 || true
+  die "expected empty stdout for KO fixture"
+}
+grep -q "\[FAIL\] manifest validation failed" "$TMPDIR_SMOKE/lint_ko.stderr" || {
+  echo "[smoke] DEBUG: gyte-lint --manifest KO stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_ko.stderr" >&2 || true
+  die "expected [FAIL] line in stderr for KO fixture"
+}
+grep -q "\[ERR\]" "$TMPDIR_SMOKE/lint_ko.stderr" || {
+  echo "[smoke] DEBUG: gyte-lint --manifest KO stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/lint_ko.stderr" >&2 || true
+  die "expected at least one [ERR] in stderr for KO fixture"
+}
+ok "gyte-lint: --manifest PATH KO fixture (rc=2, stderr has [ERR]/[FAIL]) OK"
 ok "SMOKE TEST PASSED"
