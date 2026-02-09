@@ -11,6 +11,7 @@ set -euo pipefail
 # NOTE:
 # - Shellcheck gate is already enforced by the CI workflow step "Shellcheck scripts".
 # - This smoke must NOT depend on user-local installs or live YouTube sessions.
+# - Wrappers under ./bin are OPTIONAL in CI; smoke calls ./scripts directly.
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -30,11 +31,12 @@ need sed
 need ls
 need grep
 
-# Ensure scripts exist (gyte-explain is used by the smoke)
+# Ensure scripts exist (smoke calls scripts directly)
 [[ -x "$ROOT/scripts/gyte-explain" ]] || die "missing or not executable: scripts/gyte-explain"
 [[ -x "$ROOT/scripts/gyte-lint" ]] || die "missing or not executable: scripts/gyte-lint"
+[[ -x "$ROOT/scripts/gyte-digest" ]] || die "missing or not executable: scripts/gyte-digest"
 
-# IMPORTANT: make repo commands available in CI (no user-local install).
+# Make repo commands available (still useful if some scripts call others).
 export PATH="$ROOT/bin:$ROOT/scripts:$PATH"
 
 ok "repo root: $ROOT"
@@ -48,7 +50,7 @@ ANON="$TMPDIR_SMOKE/anon.cookies"
 
 # 0.1) plain dry-run (no cookies) -> must succeed (rc=0)
 set +e
-"$ROOT/bin/gyte-digest" --dry-run >"$TMPDIR_SMOKE/plain.stdout" 2>"$TMPDIR_SMOKE/plain.stderr"
+"$ROOT/scripts/gyte-digest" --dry-run >"$TMPDIR_SMOKE/plain.stdout" 2>"$TMPDIR_SMOKE/plain.stderr"
 RC=$?
 set -e
 [[ "$RC" -eq 0 ]] || {
@@ -65,13 +67,6 @@ set -e
   echo "[smoke] DEBUG: yt-dlp --version:" >&2
   (yt-dlp --version 2>&1 | sed -n '1,5p' >&2) || true
 
-  echo "[smoke] DEBUG: trace gyte-digest wrapper (bash -x) --dry-run:" >&2
-  set +e
-  bash -x "$ROOT/bin/gyte-digest" --dry-run >&2
-  TRC=$?
-  set -e
-  echo "[smoke] DEBUG: wrapper trace rc=$TRC" >&2
-
   echo "[smoke] DEBUG: trace scripts/gyte-digest (bash -x) --dry-run:" >&2
   set +e
   bash -x "$ROOT/scripts/gyte-digest" --dry-run >&2
@@ -87,7 +82,7 @@ ok "gyte-digest: plain --dry-run (rc=0) OK"
 printf "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tFALSE\t0\tPREF\thl=en\n" >"$ANON"
 
 set +e
-"$ROOT/bin/gyte-digest" --cookies "$ANON" --dry-run >"$TMPDIR_SMOKE/anon.stdout" 2>"$TMPDIR_SMOKE/anon.stderr"
+"$ROOT/scripts/gyte-digest" --cookies "$ANON" --dry-run >"$TMPDIR_SMOKE/anon.stdout" 2>"$TMPDIR_SMOKE/anon.stderr"
 RC=$?
 set -e
 [[ "$RC" -eq 1 ]] || {
@@ -101,7 +96,7 @@ ok "gyte-digest: anon cookies fail-fast (rc=1) OK"
 
 # 0.3) invalid browser -> must fail rc=1
 set +e
-"$ROOT/bin/gyte-digest" --dry-run --browser ie >"$TMPDIR_SMOKE/browser.stdout" 2>"$TMPDIR_SMOKE/browser.stderr"
+"$ROOT/scripts/gyte-digest" --dry-run --browser ie >"$TMPDIR_SMOKE/browser.stdout" 2>"$TMPDIR_SMOKE/browser.stderr"
 RC=$?
 set -e
 [[ "$RC" -eq 1 ]] || {
