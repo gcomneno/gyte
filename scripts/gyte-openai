@@ -101,22 +101,13 @@ def resolve_api_key() -> str:
 def main() -> None:
     args = parse_args()
 
-    if OpenAI is None:
-        eprintln(
-            "[ERROR] Il pacchetto 'openai' non è installato.\n"
-            "        Installa con: pip install openai\n"
-            "        (Richiede anche OPENAI_API_KEY in ambiente.)"
-        )
-        sys.exit(1)
-
-    api_key = resolve_api_key()
-
     # Lingue passate da gyte-translate (se presenti)
     src_lang = os.environ.get("SRC_LANG", "auto")
     tgt_lang = os.environ.get("TARGET_LANG", "en")
 
     system_prompt = load_system_prompt(args.system_prompt)
 
+    # DRY-RUN deve funzionare anche senza dipendenze e senza key
     if args.dry_run:
         eprintln("gyte-openai (dry-run)")
         eprintln(f"  Model        : {args.model}")
@@ -126,6 +117,16 @@ def main() -> None:
         eprintln(f"  Max input    : {MAX_INPUT_CHARS} chars")
         eprintln("  Nota: nessuna chiamata API verrà effettuata.")
         sys.exit(0)
+
+    if OpenAI is None:
+        eprintln(
+            "[ERROR] Il pacchetto 'openai' non è installato.\n"
+            "        Installa con: pip install openai\n"
+            "        (Richiede anche OPENAI_API_KEY in ambiente.)"
+        )
+        sys.exit(1)
+
+    api_key = resolve_api_key()
 
     # Leggi tutto l'input da stdin
     input_text = sys.stdin.read()
@@ -159,7 +160,6 @@ def main() -> None:
     ).strip()
 
     try:
-        # API Chat Completions stile nuovo client
         response = client.chat.completions.create(
             model=args.model,
             messages=[
@@ -168,7 +168,6 @@ def main() -> None:
             ],
         )
     except Exception as e:
-        # Non includiamo mai nell'errore nulla che possa contenere la chiave o il testo completo.
         eprintln(f"[ERROR] Errore durante la chiamata OpenAI: {e}")
         sys.exit(1)
 
@@ -182,7 +181,6 @@ def main() -> None:
         eprintln("[ERROR] Risposta OpenAI vuota.")
         sys.exit(1)
 
-    # Output SOLO il testo tradotto, su stdout
     sys.stdout.write(content)
     if not content.endswith("\n"):
         sys.stdout.write("\n")
