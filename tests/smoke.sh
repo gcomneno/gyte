@@ -1092,4 +1092,173 @@ grep -Eqi "opzione sconosciuta|non riconosciut|unknown" "$TMPDIR_SMOKE/mergepl_b
 }
 ok "gyte-merge-pl: unknown-option contract (rc=1, stderr message) OK"
 
+# 16) gyte-doctor deterministic contracts (OFFLINE; tolerant to CI environment)
+
+[[ -x "$ROOT/scripts/gyte-doctor" ]] || die "missing or not executable: scripts/gyte-doctor"
+
+# 16.1) --help contract
+set +e
+"$ROOT/scripts/gyte-doctor" --help >"$TMPDIR_SMOKE/doctor_help.stdout" 2>"$TMPDIR_SMOKE/doctor_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-doctor --help, got rc=$RC"
+
+cat "$TMPDIR_SMOKE/doctor_help.stdout" "$TMPDIR_SMOKE/doctor_help.stderr" >"$TMPDIR_SMOKE/doctor_help.all" || true
+grep -q "GYTE Doctor" "$TMPDIR_SMOKE/doctor_help.all" || die "expected 'GYTE Doctor' in gyte-doctor --help output"
+grep -q -- "--json" "$TMPDIR_SMOKE/doctor_help.all" || die "expected '--json' in gyte-doctor --help output"
+ok "gyte-doctor: --help contract (rc=0, output ok) OK"
+
+# 16.2) --json contract (rc can be 0 or 1 depending on env; output must be valid JSON)
+set +e
+"$ROOT/scripts/gyte-doctor" --json >"$TMPDIR_SMOKE/doctor_json.stdout" 2>"$TMPDIR_SMOKE/doctor_json.stderr"
+RC=$?
+set -e
+if [[ "$RC" -ne 0 && "$RC" -ne 1 ]]; then
+  echo "[smoke] DEBUG: gyte-doctor --json stdout:" >&2
+  sed -n '1,220p' "$TMPDIR_SMOKE/doctor_json.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-doctor --json stderr:" >&2
+  sed -n '1,220p' "$TMPDIR_SMOKE/doctor_json.stderr" >&2 || true
+  die "expected rc=0 or rc=1 for gyte-doctor --json, got rc=$RC"
+fi
+
+python3 - "$TMPDIR_SMOKE/doctor_json.stdout" <<'PY'
+import json, sys
+p = sys.argv[1]
+with open(p, "r", encoding="utf-8") as f:
+    json.load(f)
+PY
+ok "gyte-doctor: --json contract (rc=0/1, output is valid JSON) OK"
+
+# 16.3) unknown arg -> rc=2 + message on stderr
+set +e
+"$ROOT/scripts/gyte-doctor" --nope >"$TMPDIR_SMOKE/doctor_bad.stdout" 2>"$TMPDIR_SMOKE/doctor_bad.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || {
+  echo "[smoke] DEBUG: gyte-doctor --nope stdout:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/doctor_bad.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-doctor --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/doctor_bad.stderr" >&2 || true
+  die "expected rc=2 for gyte-doctor unknown arg, got rc=$RC"
+}
+grep -q "argomento sconosciuto" "$TMPDIR_SMOKE/doctor_bad.stderr" || {
+  echo "[smoke] DEBUG: gyte-doctor --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/doctor_bad.stderr" >&2 || true
+  die "expected 'argomento sconosciuto' in gyte-doctor stderr"
+}
+ok "gyte-doctor: unknown-arg contract (rc=2, stderr message) OK"
+
+# 17) gyte-openai deterministic contracts (OFFLINE; no API calls)
+
+[[ -x "$ROOT/scripts/gyte-openai" ]] || die "missing or not executable: scripts/gyte-openai"
+
+# 17.1) --help contract
+set +e
+"$ROOT/scripts/gyte-openai" --help >"$TMPDIR_SMOKE/openai_help.stdout" 2>"$TMPDIR_SMOKE/openai_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-openai --help, got rc=$RC"
+cat "$TMPDIR_SMOKE/openai_help.stdout" "$TMPDIR_SMOKE/openai_help.stderr" >"$TMPDIR_SMOKE/openai_help.all" || true
+grep -q "usage: gyte-openai" "$TMPDIR_SMOKE/openai_help.all" || die "expected usage line in gyte-openai --help output"
+grep -q -- "--dry-run" "$TMPDIR_SMOKE/openai_help.all" || die "expected '--dry-run' in gyte-openai --help output"
+ok "gyte-openai: --help contract (rc=0, output ok) OK"
+
+# 17.2) missing OPENAI_API_KEY -> rc=1 + message
+set +e
+OPENAI_API_KEY="" "$ROOT/scripts/gyte-openai" >"$TMPDIR_SMOKE/openai_nokey.stdout" 2>"$TMPDIR_SMOKE/openai_nokey.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-openai (no key) stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/openai_nokey.stderr" >&2 || true
+  die "expected rc=1 for gyte-openai missing OPENAI_API_KEY, got rc=$RC"
+}
+grep -q "OPENAI_API_KEY" "$TMPDIR_SMOKE/openai_nokey.stderr" || die "expected OPENAI_API_KEY mention in gyte-openai missing-key stderr"
+ok "gyte-openai: missing-key contract (rc=1, stderr mentions OPENAI_API_KEY) OK"
+
+# 17.3) unknown arg -> rc=2 (argparse) + unrecognized arguments on stderr
+set +e
+"$ROOT/scripts/gyte-openai" --nope >"$TMPDIR_SMOKE/openai_bad.stdout" 2>"$TMPDIR_SMOKE/openai_bad.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || {
+  echo "[smoke] DEBUG: gyte-openai --nope stderr:" >&2
+  sed -n '1,160p' "$TMPDIR_SMOKE/openai_bad.stderr" >&2 || true
+  die "expected rc=2 for gyte-openai unknown arg, got rc=$RC"
+}
+grep -q "unrecognized arguments" "$TMPDIR_SMOKE/openai_bad.stderr" || die "expected 'unrecognized arguments' in gyte-openai unknown-arg stderr"
+ok "gyte-openai: unknown-arg contract (rc=2, stderr message) OK"
+
+# 17.4) --dry-run with fake key must be rc=0 and must not call API
+set +e
+printf "ciao\n" | OPENAI_API_KEY="sk-fake" "$ROOT/scripts/gyte-openai" --dry-run >"$TMPDIR_SMOKE/openai_dry.stdout" 2>"$TMPDIR_SMOKE/openai_dry.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-openai --dry-run stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/openai_dry.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-openai --dry-run stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/openai_dry.stderr" >&2 || true
+  die "expected rc=0 for gyte-openai --dry-run with fake key, got rc=$RC"
+}
+# Non imponiamo testo specifico: solo che non esploda e produca qualcosa di sensato
+[[ -s "$TMPDIR_SMOKE/openai_dry.stdout" || -s "$TMPDIR_SMOKE/openai_dry.stderr" ]] || die "expected some output for gyte-openai --dry-run"
+ok "gyte-openai: --dry-run contract (rc=0 with fake key) OK"
+
+# 18) gyte-openai-digest deterministic contracts (OFFLINE; no API calls)
+
+[[ -x "$ROOT/scripts/gyte-openai-digest" ]] || die "missing or not executable: scripts/gyte-openai-digest"
+
+# 18.1) --help contract
+set +e
+"$ROOT/scripts/gyte-openai-digest" --help >"$TMPDIR_SMOKE/openai_d_help.stdout" 2>"$TMPDIR_SMOKE/openai_d_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-openai-digest --help, got rc=$RC"
+cat "$TMPDIR_SMOKE/openai_d_help.stdout" "$TMPDIR_SMOKE/openai_d_help.stderr" >"$TMPDIR_SMOKE/openai_d_help.all" || true
+grep -q "usage: gyte-openai-digest" "$TMPDIR_SMOKE/openai_d_help.all" || die "expected usage line in gyte-openai-digest --help output"
+grep -q -- "--dry-run" "$TMPDIR_SMOKE/openai_d_help.all" || die "expected '--dry-run' in gyte-openai-digest --help output"
+ok "gyte-openai-digest: --help contract (rc=0, output ok) OK"
+
+# 18.2) missing OPENAI_API_KEY -> rc=2 + message
+set +e
+OPENAI_API_KEY="" "$ROOT/scripts/gyte-openai-digest" >"$TMPDIR_SMOKE/openai_d_nokey.stdout" 2>"$TMPDIR_SMOKE/openai_d_nokey.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || {
+  echo "[smoke] DEBUG: gyte-openai-digest (no key) stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/openai_d_nokey.stderr" >&2 || true
+  die "expected rc=2 for gyte-openai-digest missing OPENAI_API_KEY, got rc=$RC"
+}
+grep -q "OPENAI_API_KEY" "$TMPDIR_SMOKE/openai_d_nokey.stderr" || die "expected OPENAI_API_KEY mention in gyte-openai-digest missing-key stderr"
+ok "gyte-openai-digest: missing-key contract (rc=2, stderr mentions OPENAI_API_KEY) OK"
+
+# 18.3) unknown arg -> rc=2 + unrecognized arguments on stderr
+set +e
+"$ROOT/scripts/gyte-openai-digest" --nope >"$TMPDIR_SMOKE/openai_d_bad.stdout" 2>"$TMPDIR_SMOKE/openai_d_bad.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || {
+  echo "[smoke] DEBUG: gyte-openai-digest --nope stderr:" >&2
+  sed -n '1,160p' "$TMPDIR_SMOKE/openai_d_bad.stderr" >&2 || true
+  die "expected rc=2 for gyte-openai-digest unknown arg, got rc=$RC"
+}
+grep -q "unrecognized arguments" "$TMPDIR_SMOKE/openai_d_bad.stderr" || die "expected 'unrecognized arguments' in gyte-openai-digest unknown-arg stderr"
+ok "gyte-openai-digest: unknown-arg contract (rc=2, stderr message) OK"
+
+# 18.4) --dry-run with fake key must be rc=0 and must not call API
+set +e
+printf "ciao\n" | OPENAI_API_KEY="sk-fake" "$ROOT/scripts/gyte-openai-digest" --dry-run >"$TMPDIR_SMOKE/openai_d_dry.stdout" 2>"$TMPDIR_SMOKE/openai_d_dry.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-openai-digest --dry-run stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/openai_d_dry.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-openai-digest --dry-run stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/openai_d_dry.stderr" >&2 || true
+  die "expected rc=0 for gyte-openai-digest --dry-run with fake key, got rc=$RC"
+}
+[[ -s "$TMPDIR_SMOKE/openai_d_dry.stdout" || -s "$TMPDIR_SMOKE/openai_d_dry.stderr" ]] || die "expected some output for gyte-openai-digest --dry-run"
+ok "gyte-openai-digest: --dry-run contract (rc=0 with fake key) OK"
+
 ok "SMOKE TEST PASSED"
