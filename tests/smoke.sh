@@ -599,15 +599,23 @@ set -e
 [[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-translate --help, got rc=$RC"
 
 cat "$TMPDIR_SMOKE/translate_help.stdout" "$TMPDIR_SMOKE/translate_help.stderr" >"$TMPDIR_SMOKE/translate_help.all" || true
+
 grep -q "Uso:" "$TMPDIR_SMOKE/translate_help.all" || {
   echo "[smoke] DEBUG: gyte-translate --help output:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/translate_help.all" >&2 || true
   die "expected 'Uso:' in gyte-translate --help output"
 }
-grep -q -- "--engine" "$TMPDIR_SMOKE/translate_help.all" || {
+
+grep -q -- "--dry-run" "$TMPDIR_SMOKE/translate_help.all" || {
   echo "[smoke] DEBUG: gyte-translate --help output:" >&2
-  sed -n '1,200p' "$TMPDIR_SMOKE/translate_help.all" >&2 || true
-  die "expected '--engine' in gyte-translate --help output"
+  sed -n '1,220p' "$TMPDIR_SMOKE/translate_help.all" >&2 || true
+  die "expected '--dry-run' in gyte-translate --help output"
+}
+
+grep -q "GYTE_AI_CMD" "$TMPDIR_SMOKE/translate_help.all" || {
+  echo "[smoke] DEBUG: gyte-translate --help output:" >&2
+  sed -n '1,240p' "$TMPDIR_SMOKE/translate_help.all" >&2 || true
+  die "expected 'GYTE_AI_CMD' in gyte-translate --help output"
 }
 ok "gyte-translate: --help contract (rc=0, output ok) OK"
 
@@ -631,12 +639,12 @@ grep -Eqi "non trovato|not found|missing file" "$TMPDIR_SMOKE/translate_missing.
 }
 ok "gyte-translate: missing-input contract (rc=1, stderr message) OK"
 
-# 10.3) --dry-run prints argos-translate command, rc=0, stderr empty
+# 10.3) --dry-run requires GYTE_AI_CMD; set it to a deterministic no-op pipeline and expect rc=0
 IN_TXT="$TMPDIR_SMOKE/translate_in.txt"
 printf "ciao mondo\n" >"$IN_TXT"
 
 set +e
-"$ROOT/scripts/gyte-translate" "$IN_TXT" --from it --to en --dry-run >"$TMPDIR_SMOKE/translate_dry.stdout" 2>"$TMPDIR_SMOKE/translate_dry.stderr"
+GYTE_AI_CMD="cat" "$ROOT/scripts/gyte-translate" "$IN_TXT" --from it --to en --dry-run >"$TMPDIR_SMOKE/translate_dry.stdout" 2>"$TMPDIR_SMOKE/translate_dry.stderr"
 RC=$?
 set -e
 [[ "$RC" -eq 0 ]] || {
@@ -644,21 +652,27 @@ set -e
   sed -n '1,200p' "$TMPDIR_SMOKE/translate_dry.stdout" >&2 || true
   echo "[smoke] DEBUG: gyte-translate --dry-run stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/translate_dry.stderr" >&2 || true
-  die "expected rc=0 for gyte-translate --dry-run, got rc=$RC"
+  die "expected rc=0 for gyte-translate --dry-run with GYTE_AI_CMD set, got rc=$RC"
 }
-grep -q "argos-translate" "$TMPDIR_SMOKE/translate_dry.stdout" || {
+
+grep -q "Modalità dry-run" "$TMPDIR_SMOKE/translate_dry.stdout" || {
   echo "[smoke] DEBUG: gyte-translate --dry-run stdout:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/translate_dry.stdout" >&2 || true
-  die "expected 'argos-translate' in gyte-translate --dry-run stdout"
+  die "expected 'Modalità dry-run' marker in gyte-translate --dry-run stdout"
 }
-grep -q -- "--from it" "$TMPDIR_SMOKE/translate_dry.stdout" || die "expected '--from it' in dry-run stdout"
-grep -q -- "--to en" "$TMPDIR_SMOKE/translate_dry.stdout" || die "expected '--to en' in dry-run stdout"
+
+grep -q "GYTE_AI_CMD" "$TMPDIR_SMOKE/translate_dry.stdout" || {
+  echo "[smoke] DEBUG: gyte-translate --dry-run stdout:" >&2
+  sed -n '1,220p' "$TMPDIR_SMOKE/translate_dry.stdout" >&2 || true
+  die "expected 'GYTE_AI_CMD' mention in gyte-translate --dry-run stdout"
+}
+
 [[ ! -s "$TMPDIR_SMOKE/translate_dry.stderr" ]] || {
   echo "[smoke] DEBUG: gyte-translate --dry-run stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/translate_dry.stderr" >&2 || true
   die "expected empty stderr for gyte-translate --dry-run"
 }
-ok "gyte-translate: --dry-run contract (rc=0, stdout has argos-translate, stderr empty) OK"
+ok "gyte-translate: --dry-run contract (rc=0 with GYTE_AI_CMD set, stdout ok, stderr empty) OK"
 
 # 10.4) unknown arg -> rc=2 + Unknown argument on stderr
 set +e
@@ -672,10 +686,10 @@ set -e
   sed -n '1,200p' "$TMPDIR_SMOKE/translate_bad.stderr" >&2 || true
   die "expected rc=2 for gyte-translate unknown arg, got rc=$RC"
 }
-grep -q "Unknown argument" "$TMPDIR_SMOKE/translate_bad.stderr" || {
+grep -q "Opzione non riconosciuta:" "$TMPDIR_SMOKE/translate_bad.stderr" || {
   echo "[smoke] DEBUG: gyte-translate --nope stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/translate_bad.stderr" >&2 || true
-  die "expected 'Unknown argument' in stderr for gyte-translate unknown arg"
+  die "expected 'Opzione non riconosciuta:' in stderr for gyte-translate unknown option"
 }
 ok "gyte-translate: unknown-arg contract (rc=2, stderr message) OK"
 
