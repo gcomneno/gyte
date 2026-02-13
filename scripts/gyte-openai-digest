@@ -4,9 +4,11 @@ import os
 import re
 import sys
 
-from typing import cast
-from openai.types.chat import ChatCompletionMessageParam
+from typing import TYPE_CHECKING, cast
 
+if TYPE_CHECKING:
+    # Solo per type-checking; a runtime non deve richiedere openai
+    from openai.types.chat import ChatCompletionMessageParam
 
 def eprint(*a, **k):
     print(*a, file=sys.stderr, **k)
@@ -102,11 +104,19 @@ def build_prompt(depth: int, title: str, url: str, transcript: str) -> list[dict
 def openai_chat(model: str, messages: list[dict], temperature: float = 0.2) -> str:
     # Solo SDK OpenAI moderno (openai>=1.x)
     from openai import OpenAI  # type: ignore
+    from typing import Any
+
+    try:
+        from openai.types.chat import ChatCompletionMessageParam  # type: ignore
+        typed_messages = cast(list[ChatCompletionMessageParam], messages)
+    except Exception:
+        # openai non presente o types non disponibili: runtime ok, perdiamo solo typing
+        typed_messages = cast(list[Any], messages)
 
     client = OpenAI()
     resp = client.chat.completions.create(
         model=model,
-        messages=cast(list[ChatCompletionMessageParam], messages),
+        messages=typed_messages,
         temperature=temperature,
     )
     return (resp.choices[0].message.content or "").strip()
