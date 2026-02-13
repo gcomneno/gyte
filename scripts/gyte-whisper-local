@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Uso:
-#   gyte-whisper-local [--model MODEL] [--lang LANG] [--outdir DIR] FILE
+#   gyte-whisper-local [--model MODEL] [--lang LANG] [--outdir DIR] [--backend B] FILE
 #
 # Scopo:
 # - Trascrizione locale con whisper.cpp / faster-whisper / whisper (a seconda del tuo setup)
@@ -21,7 +21,7 @@ BACKEND="${GYTE_WHISPER_BACKEND:-auto}"  # auto|whispercpp|faster|openai|unknown
 usage() {
   cat <<EOF
 Uso:
-  $PROG [--model MODEL] [--lang LANG] [--outdir DIR] FILE
+  $PROG [--model MODEL] [--lang LANG] [--outdir DIR] [--backend B] FILE
 
 Opzioni:
   --model MODEL   modello whisper (dipende dal backend)
@@ -32,14 +32,19 @@ Opzioni:
 EOF
 }
 
-die(){ echo "ERRORE: $*" >&2; exit 2; }
-need(){ command -v "$1" >/dev/null 2>&1 || die "comando richiesto non trovato: $1"; }
+# Exit code policy:
+# - 2: usage/parsing errors
+# - 1: runtime/user-env errors
+die_usage(){ echo "ERRORE: $*" >&2; exit 2; }
+die_runtime(){ echo "ERRORE: $*" >&2; exit 1; }
+
+need(){ command -v "$1" >/dev/null 2>&1 || die_runtime "comando richiesto non trovato: $1"; }
 
 # Parse args
 while (( $# > 0 )); do
   case "$1" in
     --model)
-      (( $#>=2 )) || die "--model richiede MODEL"
+      (( $#>=2 )) || die_usage "--model richiede MODEL"
       MODEL="$2"
       shift 2
       ;;
@@ -48,7 +53,7 @@ while (( $# > 0 )); do
       shift
       ;;
     --lang)
-      (( $#>=2 )) || die "--lang richiede LANG"
+      (( $#>=2 )) || die_usage "--lang richiede LANG"
       LANG="$2"
       shift 2
       ;;
@@ -57,7 +62,7 @@ while (( $# > 0 )); do
       shift
       ;;
     --outdir)
-      (( $#>=2 )) || die "--outdir richiede DIR"
+      (( $#>=2 )) || die_usage "--outdir richiede DIR"
       OUTDIR="$2"
       shift 2
       ;;
@@ -66,7 +71,7 @@ while (( $# > 0 )); do
       shift
       ;;
     --backend)
-      (( $#>=2 )) || die "--backend richiede VALORE"
+      (( $#>=2 )) || die_usage "--backend richiede VALORE"
       BACKEND="$2"
       shift 2
       ;;
@@ -86,7 +91,7 @@ done
 
 FILE="${1:-}"
 [[ -n "$FILE" ]] || { usage; exit 2; }
-[[ -f "$FILE" ]] || die "file non trovato: $FILE"
+[[ -f "$FILE" ]] || die_runtime "file non trovato: $FILE"
 
 if [[ -z "$OUTDIR" ]]; then
   OUTDIR="$(cd -- "$(dirname -- "$FILE")" && pwd)"
@@ -132,7 +137,7 @@ case "$BACKEND" in
   whispercpp|faster|openai|auto|unknown)
     ;;
   *)
-    die "--backend non valido: $BACKEND"
+    die_usage "--backend non valido: $BACKEND"
     ;;
 esac
 
@@ -145,7 +150,7 @@ fi
 # Se abbiamo un backend “vero”, STT_BIN deve esistere.
 case "$BACKEND" in
   whispercpp|faster|openai)
-    [[ -n "$STT_BIN" ]] || die "backend '$BACKEND' richiesto ma nessun binario STT trovato nel PATH"
+    [[ -n "$STT_BIN" ]] || die_runtime "backend '$BACKEND' richiesto ma nessun binario STT trovato nel PATH"
     need "$STT_BIN"
     ;;
 esac
@@ -166,7 +171,7 @@ case "$BACKEND" in
     fi
     "$STT_BIN" "${args[@]}" >/dev/null
     # whisper.cpp typically outputs OUT_PREFIX.txt
-    [[ -s "${OUT_PREFIX}.txt" ]] || die "output mancante o vuoto: ${OUT_PREFIX}.txt"
+    [[ -s "${OUT_PREFIX}.txt" ]] || die_runtime "output mancante o vuoto: ${OUT_PREFIX}.txt"
     mv -f "${OUT_PREFIX}.txt" "$OUT_TXT"
     ;;
   faster)
@@ -179,7 +184,7 @@ case "$BACKEND" in
     fi
     "$STT_BIN" "${args[@]}" >/dev/null
     # faster-whisper outputs "$stem.txt" in OUTDIR
-    [[ -s "$OUT_TXT" ]] || die "output mancante o vuoto: $OUT_TXT"
+    [[ -s "$OUT_TXT" ]] || die_runtime "output mancante o vuoto: $OUT_TXT"
     ;;
   openai)
     # If user has python openai-whisper installed and uses "whisper" CLI.
@@ -191,10 +196,10 @@ case "$BACKEND" in
       args+=("--language" "$LANG")
     fi
     "$STT_BIN" "${args[@]}" >/dev/null
-    [[ -s "$OUT_TXT" ]] || die "output mancante o vuoto: $OUT_TXT"
+    [[ -s "$OUT_TXT" ]] || die_runtime "output mancante o vuoto: $OUT_TXT"
     ;;
   auto|unknown)
-    die "backend non determinato (nessun whisper trovato nel PATH). Installa whisper.cpp o faster-whisper."
+    die_runtime "backend non determinato (nessun whisper trovato nel PATH). Installa whisper.cpp o faster-whisper."
     ;;
 esac
 

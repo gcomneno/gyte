@@ -52,11 +52,9 @@ if [ "${1-}" = "--no-parallel" ]; then
   shift
 fi
 
-# Ora ci aspettiamo:
-#   PLAYLIST_URL [MAX_JOBS]
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
   usage
-  exit 1
+  exit 2
 fi
 
 PLAYLIST_URL="$1"

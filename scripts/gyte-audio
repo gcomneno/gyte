@@ -186,7 +186,10 @@ parse_args() {
         --quiet) QUIET=1 ;;
         --verbose) VERBOSE=1 ;;
         --) URL="$1"; shift; break ;;
-        -*) die "Opzione sconosciuta prima dell'URL: $arg" ;;
+        -*)
+          echo "Opzione sconosciuta prima dell'URL: $arg" >&2
+          exit 2
+          ;;
         *) URL="$arg" ;;
       esac
     else
@@ -213,7 +216,7 @@ filter_safe_args() {
 
 parse_args "$@"
 
-[ -n "$URL" ] || { usage; exit 1; }
+[ -n "$URL" ] || { usage; exit 2; }
 
 # Commit 9: --json ⇒ quiet automatico
 if [ "$JSON" -eq 1 ]; then

@@ -101,7 +101,8 @@ while [[ $# -gt 0 ]]; do
       break
       ;;
     -*)
-      die "opzione sconosciuta: $1"
+      echo "opzione sconosciuta: $1" >&2
+      exit 2
       ;;
     *)
       # primo positional = PLAYLIST_DIR
