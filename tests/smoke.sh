@@ -531,4 +531,60 @@ grep -q "Errore: l'URL non può iniziare con '-'" "$TMPDIR_SMOKE/transcript_flag
 }
 ok "gyte-transcript: deterministic flag-as-url error (rc=1, stderr message) OK"
 
+# 9) gyte-transcript-pl deterministic contracts (OFFLINE)
+
+# 9.1) --help contract
+set +e
+"$ROOT/scripts/gyte-transcript-pl" --help >"$TMPDIR_SMOKE/transcript_pl_help.stdout" 2>"$TMPDIR_SMOKE/transcript_pl_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-transcript-pl --help, got rc=$RC"
+
+cat "$TMPDIR_SMOKE/transcript_pl_help.stdout" "$TMPDIR_SMOKE/transcript_pl_help.stderr" >"$TMPDIR_SMOKE/transcript_pl_help.all" || true
+grep -q "Uso:" "$TMPDIR_SMOKE/transcript_pl_help.all" || {
+  echo "[smoke] DEBUG: gyte-transcript-pl --help output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_pl_help.all" >&2 || true
+  die "expected 'Uso:' in gyte-transcript-pl --help output"
+}
+ok "gyte-transcript-pl: --help contract (rc=0, output ok) OK"
+
+# 9.2) missing URL -> usage, rc=1
+set +e
+"$ROOT/scripts/gyte-transcript-pl" >"$TMPDIR_SMOKE/transcript_pl_noargs.stdout" 2>"$TMPDIR_SMOKE/transcript_pl_noargs.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-transcript-pl (no args) output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_pl_noargs.stdout" >&2 || true
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_pl_noargs.stderr" >&2 || true
+  die "expected rc=1 for gyte-transcript-pl with no args, got rc=$RC"
+}
+
+cat "$TMPDIR_SMOKE/transcript_pl_noargs.stdout" "$TMPDIR_SMOKE/transcript_pl_noargs.stderr" >"$TMPDIR_SMOKE/transcript_pl_noargs.all" || true
+grep -q "Uso:" "$TMPDIR_SMOKE/transcript_pl_noargs.all" || {
+  echo "[smoke] DEBUG: gyte-transcript-pl (no args) combined output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_pl_noargs.all" >&2 || true
+  die "expected 'Uso:' in gyte-transcript-pl no-args output"
+}
+ok "gyte-transcript-pl: no-args usage contract (rc=1, output has Uso:) OK"
+
+# 9.3) flag as URL -> rc=1 + specific error
+set +e
+"$ROOT/scripts/gyte-transcript-pl" --nope >"$TMPDIR_SMOKE/transcript_pl_flag.stdout" 2>"$TMPDIR_SMOKE/transcript_pl_flag.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-transcript-pl --nope output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_pl_flag.stdout" >&2 || true
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_pl_flag.stderr" >&2 || true
+  die "expected rc=1 for gyte-transcript-pl flag-as-url error, got rc=$RC"
+}
+
+grep -q "l'URL non può iniziare con '-'" "$TMPDIR_SMOKE/transcript_pl_flag.stderr" || {
+  echo "[smoke] DEBUG: gyte-transcript-pl --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_pl_flag.stderr" >&2 || true
+  die "expected URL-leading-dash error message in gyte-transcript-pl stderr"
+}
+ok "gyte-transcript-pl: flag-as-url error contract (rc=1, stderr message) OK"
+
 ok "SMOKE TEST PASSED"
