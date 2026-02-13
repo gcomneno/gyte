@@ -859,4 +859,67 @@ grep -Eqi "file non trovato|not found|missing" "$TMPDIR_SMOKE/whisper_missing.st
 }
 ok "gyte-whisper-local: missing-file contract (rc=2, stderr message) OK"
 
+# 13) gyte-video deterministic contracts (OFFLINE)
+
+[[ -x "$ROOT/scripts/gyte-video" ]] || die "missing or not executable: scripts/gyte-video"
+
+# 13.1) --help contract (rc=0, output contains stable tokens)
+set +e
+"$ROOT/scripts/gyte-video" --help >"$TMPDIR_SMOKE/video_help.stdout" 2>"$TMPDIR_SMOKE/video_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-video --help, got rc=$RC"
+
+cat "$TMPDIR_SMOKE/video_help.stdout" "$TMPDIR_SMOKE/video_help.stderr" >"$TMPDIR_SMOKE/video_help.all" || true
+grep -q "Uso:" "$TMPDIR_SMOKE/video_help.all" || {
+  echo "[smoke] DEBUG: gyte-video --help output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/video_help.all" >&2 || true
+  die "expected 'Uso:' in gyte-video --help output"
+}
+grep -q "GYTE_VIDEO_FORMAT" "$TMPDIR_SMOKE/video_help.all" || {
+  echo "[smoke] DEBUG: gyte-video --help output:" >&2
+  sed -n '1,240p' "$TMPDIR_SMOKE/video_help.all" >&2 || true
+  die "expected 'GYTE_VIDEO_FORMAT' in gyte-video --help output"
+}
+ok "gyte-video: --help contract (rc=0, output ok) OK"
+
+# 13.2) no args -> usage, rc=1
+set +e
+"$ROOT/scripts/gyte-video" >"$TMPDIR_SMOKE/video_noargs.stdout" 2>"$TMPDIR_SMOKE/video_noargs.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-video (no args) stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/video_noargs.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-video (no args) stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/video_noargs.stderr" >&2 || true
+  die "expected rc=1 for gyte-video with no args, got rc=$RC"
+}
+cat "$TMPDIR_SMOKE/video_noargs.stdout" "$TMPDIR_SMOKE/video_noargs.stderr" >"$TMPDIR_SMOKE/video_noargs.all" || true
+grep -q "Uso:" "$TMPDIR_SMOKE/video_noargs.all" || {
+  echo "[smoke] DEBUG: gyte-video (no args) output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/video_noargs.all" >&2 || true
+  die "expected 'Uso:' in gyte-video no-args output"
+}
+ok "gyte-video: no-args usage contract (rc=1, output has Uso:) OK"
+
+# 13.3) flag-as-url deterministic error -> rc=1 + specific message
+set +e
+"$ROOT/scripts/gyte-video" --nope >"$TMPDIR_SMOKE/video_flag.stdout" 2>"$TMPDIR_SMOKE/video_flag.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-video --nope stdout:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/video_flag.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-video --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/video_flag.stderr" >&2 || true
+  die "expected rc=1 for gyte-video flag-as-url error, got rc=$RC"
+}
+grep -q "l'URL non può iniziare con '-'" "$TMPDIR_SMOKE/video_flag.stderr" || {
+  echo "[smoke] DEBUG: gyte-video --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/video_flag.stderr" >&2 || true
+  die "expected URL-leading-dash error message in gyte-video stderr"
+}
+ok "gyte-video: flag-as-url error contract (rc=1, stderr message) OK"
+
 ok "SMOKE TEST PASSED"
