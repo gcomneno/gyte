@@ -693,4 +693,106 @@ grep -q "Opzione non riconosciuta:" "$TMPDIR_SMOKE/translate_bad.stderr" || {
 }
 ok "gyte-translate: unknown-arg contract (rc=2, stderr message) OK"
 
+# 11) gyte-reflow-text deterministic contracts (OFFLINE)
+
+[[ -x "$ROOT/scripts/gyte-reflow-text" ]] || die "missing or not executable: scripts/gyte-reflow-text"
+
+# 11.1) --help contract (rc=0, output contains stable tokens)
+set +e
+"$ROOT/scripts/gyte-reflow-text" --help >"$TMPDIR_SMOKE/reflow_help.stdout" 2>"$TMPDIR_SMOKE/reflow_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-reflow-text --help, got rc=$RC"
+
+cat "$TMPDIR_SMOKE/reflow_help.stdout" "$TMPDIR_SMOKE/reflow_help.stderr" >"$TMPDIR_SMOKE/reflow_help.all" || true
+
+grep -q "Uso:" "$TMPDIR_SMOKE/reflow_help.all" || {
+  echo "[smoke] DEBUG: gyte-reflow-text --help stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_help.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-reflow-text --help stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_help.stderr" >&2 || true
+  die "expected 'Uso:' in gyte-reflow-text --help output"
+}
+
+grep -q -- "--ai-friendly" "$TMPDIR_SMOKE/reflow_help.all" || {
+  echo "[smoke] DEBUG: gyte-reflow-text --help output:" >&2
+  sed -n '1,240p' "$TMPDIR_SMOKE/reflow_help.all" >&2 || true
+  die "expected '--ai-friendly' in gyte-reflow-text --help output"
+}
+ok "gyte-reflow-text: --help contract (rc=0, output ok) OK"
+
+# 11.2) stdin happy-path: --ai-friendly normalizes spaces (no double spaces)
+IN1="$TMPDIR_SMOKE/reflow_in1.txt"
+printf "Ciao   mondo!  \n\nRiga   con   spazi.\n" >"$IN1"
+
+set +e
+"$ROOT/scripts/gyte-reflow-text" --ai-friendly <"$IN1" >"$TMPDIR_SMOKE/reflow_ai.stdout" 2>"$TMPDIR_SMOKE/reflow_ai.stderr"
+
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-reflow-text --ai-friendly stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_ai.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-reflow-text --ai-friendly stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_ai.stderr" >&2 || true
+  die "expected rc=0 for gyte-reflow-text --ai-friendly (stdin), got rc=$RC"
+}
+
+# invariant: stdout should not contain double spaces
+if grep -q "  " "$TMPDIR_SMOKE/reflow_ai.stdout"; then
+  echo "[smoke] DEBUG: gyte-reflow-text --ai-friendly stdout (found double spaces):" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_ai.stdout" >&2 || true
+  die "expected no double spaces in gyte-reflow-text --ai-friendly output"
+fi
+ok "gyte-reflow-text: --ai-friendly stdin contract (rc=0, no double spaces) OK"
+
+# 11.3) --strict-utf8: must not crash on invalid bytes; may emit warning to stderr; stdout must be produced
+# create invalid UTF-8 byte sequence (0xFF is invalid in UTF-8)
+IN2="$TMPDIR_SMOKE/reflow_in2.bin"
+python3 - "$IN2" <<'PY'
+import sys
+p = sys.argv[1]
+open(p, "wb").write(b"hello\xffworld\n")
+PY
+
+set +e
+"$ROOT/scripts/gyte-reflow-text" --strict-utf8 <"$IN2" >"$TMPDIR_SMOKE/reflow_utf8.stdout" 2>"$TMPDIR_SMOKE/reflow_utf8.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-reflow-text --strict-utf8 stdout:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/reflow_utf8.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-reflow-text --strict-utf8 stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_utf8.stderr" >&2 || true
+  die "expected rc=0 for gyte-reflow-text --strict-utf8, got rc=$RC"
+}
+[[ -s "$TMPDIR_SMOKE/reflow_utf8.stdout" ]] || die "expected non-empty stdout for gyte-reflow-text --strict-utf8"
+# stderr may be empty if no warning path triggers; accept either, but it must not contain fatal error patterns.
+if grep -Eqi "traceback|fatal|segfault" "$TMPDIR_SMOKE/reflow_utf8.stderr"; then
+  echo "[smoke] DEBUG: gyte-reflow-text --strict-utf8 stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_utf8.stderr" >&2 || true
+  die "unexpected fatal-looking stderr for gyte-reflow-text --strict-utf8"
+fi
+ok "gyte-reflow-text: --strict-utf8 contract (rc=0, stdout produced) OK"
+
+# 11.4) unknown option -> rc=1, stderr mentions unrecognized option
+set +e
+"$ROOT/scripts/gyte-reflow-text" --nope >"$TMPDIR_SMOKE/reflow_bad.stdout" 2>"$TMPDIR_SMOKE/reflow_bad.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-reflow-text --nope stdout:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/reflow_bad.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-reflow-text --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_bad.stderr" >&2 || true
+  die "expected rc=1 for gyte-reflow-text unknown option, got rc=$RC"
+}
+
+grep -Eqi "opzione sconosciuta|opzione non riconosciuta|unknown option" "$TMPDIR_SMOKE/reflow_bad.stderr" || {
+  echo "[smoke] DEBUG: gyte-reflow-text --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_bad.stderr" >&2 || true
+  die "expected unrecognized-option message in gyte-reflow-text stderr"
+}
+ok "gyte-reflow-text: unknown-option contract (rc=1, stderr message) OK"
+
 ok "SMOKE TEST PASSED"
