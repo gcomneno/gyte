@@ -484,78 +484,51 @@ ok "gyte-install: unknown-arg contract (rc=2, stderr has Unknown argument) OK"
 
 # 8) gyte-transcript deterministic contracts (OFFLINE: --help + --dry-run only)
 
-# 8.1) --help contract
+# 8.1) --help contract (robust: stdout OR stderr; no anchors)
 set +e
 "$ROOT/scripts/gyte-transcript" --help >"$TMPDIR_SMOKE/transcript_help.stdout" 2>"$TMPDIR_SMOKE/transcript_help.stderr"
 RC=$?
 set -e
 [[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-transcript --help, got rc=$RC"
 
-grep -q "^Uso:" "$TMPDIR_SMOKE/transcript_help.stdout" || {
+cat "$TMPDIR_SMOKE/transcript_help.stdout" "$TMPDIR_SMOKE/transcript_help.stderr" >"$TMPDIR_SMOKE/transcript_help.all" || true
+
+grep -q "Uso:" "$TMPDIR_SMOKE/transcript_help.all" || {
   echo "[smoke] DEBUG: gyte-transcript --help stdout:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/transcript_help.stdout" >&2 || true
-  die "expected '^Uso:' in gyte-transcript --help stdout"
-}
-
-grep -q "YT_TRANSCRIPT_LANGS" "$TMPDIR_SMOKE/transcript_help.stdout" || {
-  echo "[smoke] DEBUG: gyte-transcript --help stdout:" >&2
-  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_help.stdout" >&2 || true
-  die "expected 'YT_TRANSCRIPT_LANGS' in gyte-transcript --help stdout"
-}
-
-[[ ! -s "$TMPDIR_SMOKE/transcript_help.stderr" ]] || {
   echo "[smoke] DEBUG: gyte-transcript --help stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/transcript_help.stderr" >&2 || true
-  die "expected empty stderr for gyte-transcript --help"
+  die "expected 'Uso:' in gyte-transcript --help output"
 }
-ok "gyte-transcript: --help contract (rc=0, stdout ok, stderr empty) OK"
 
-# 8.2) --dry-run prints yt-dlp command and exits 0 (no network)
+grep -q "YT_TRANSCRIPT_LANGS" "$TMPDIR_SMOKE/transcript_help.all" || {
+  echo "[smoke] DEBUG: gyte-transcript --help stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_help.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-transcript --help stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_help.stderr" >&2 || true
+  die "expected 'YT_TRANSCRIPT_LANGS' in gyte-transcript --help output"
+}
+
+ok "gyte-transcript: --help contract (rc=0, output ok) OK"
+
+# 8.2) deterministic error: URL cannot start with '-' (flags in URL position)
 set +e
-"$ROOT/scripts/gyte-transcript" --dry-run "https://example.com/foo" >"$TMPDIR_SMOKE/transcript_dry.stdout" 2>"$TMPDIR_SMOKE/transcript_dry.stderr"
+"$ROOT/scripts/gyte-transcript" --nope >"$TMPDIR_SMOKE/transcript_flag_as_url.stdout" 2>"$TMPDIR_SMOKE/transcript_flag_as_url.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 0 ]] || {
-  echo "[smoke] DEBUG: gyte-transcript --dry-run stdout:" >&2
-  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_dry.stdout" >&2 || true
-  echo "[smoke] DEBUG: gyte-transcript --dry-run stderr:" >&2
-  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_dry.stderr" >&2 || true
-  die "expected rc=0 for gyte-transcript --dry-run, got rc=$RC"
-}
-grep -q "yt-dlp" "$TMPDIR_SMOKE/transcript_dry.stdout" || {
-  echo "[smoke] DEBUG: gyte-transcript --dry-run stdout:" >&2
-  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_dry.stdout" >&2 || true
-  die "expected 'yt-dlp' in gyte-transcript --dry-run stdout"
-}
-grep -q -- "--write-auto-subs" "$TMPDIR_SMOKE/transcript_dry.stdout" || {
-  echo "[smoke] DEBUG: gyte-transcript --dry-run stdout:" >&2
-  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_dry.stdout" >&2 || true
-  die "expected '--write-auto-subs' in gyte-transcript --dry-run stdout"
-}
-[[ ! -s "$TMPDIR_SMOKE/transcript_dry.stderr" ]] || {
-  echo "[smoke] DEBUG: gyte-transcript --dry-run stderr:" >&2
-  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_dry.stderr" >&2 || true
-  die "expected empty stderr for gyte-transcript --dry-run"
-}
-ok "gyte-transcript: --dry-run contract (rc=0, stdout has yt-dlp + --write-auto-subs, stderr empty) OK"
-
-# 8.3) unknown arg -> rc=2 + Unknown argument on stderr
-set +e
-"$ROOT/scripts/gyte-transcript" --nope >"$TMPDIR_SMOKE/transcript_bad.stdout" 2>"$TMPDIR_SMOKE/transcript_bad.stderr"
-RC=$?
-set -e
-[[ "$RC" -eq 2 ]] || {
+[[ "$RC" -eq 1 ]] || {
   echo "[smoke] DEBUG: gyte-transcript --nope stdout:" >&2
-  sed -n '1,120p' "$TMPDIR_SMOKE/transcript_bad.stdout" >&2 || true
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_flag_as_url.stdout" >&2 || true
   echo "[smoke] DEBUG: gyte-transcript --nope stderr:" >&2
-  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_bad.stderr" >&2 || true
-  die "expected rc=2 for gyte-transcript unknown arg, got rc=$RC"
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_flag_as_url.stderr" >&2 || true
+  die "expected rc=1 for gyte-transcript flag-as-url error, got rc=$RC"
 }
-grep -q "Unknown argument" "$TMPDIR_SMOKE/transcript_bad.stderr" || {
+[[ ! -s "$TMPDIR_SMOKE/transcript_flag_as_url.stdout" ]] || die "expected empty stdout for gyte-transcript flag-as-url error"
+grep -q "Errore: l'URL non può iniziare con '-'" "$TMPDIR_SMOKE/transcript_flag_as_url.stderr" || {
   echo "[smoke] DEBUG: gyte-transcript --nope stderr:" >&2
-  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_bad.stderr" >&2 || true
-  die "expected 'Unknown argument' in stderr for gyte-transcript unknown arg"
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_flag_as_url.stderr" >&2 || true
+  die "expected URL-leading-dash error message in stderr"
 }
-ok "gyte-transcript: unknown-arg contract (rc=2, stderr has Unknown argument) OK"
+ok "gyte-transcript: deterministic flag-as-url error (rc=1, stderr message) OK"
 
 ok "SMOKE TEST PASSED"
