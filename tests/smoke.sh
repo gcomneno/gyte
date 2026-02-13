@@ -9,6 +9,7 @@ set -euo pipefail
 #   - gyte-digest validation (browser whitelist, cookies fail-fast) via dry-run
 #   - gyte-lint --manifest contracts (stdlib only)
 #   - gyte-install (non-destructive, --dry-run only; CI-safe even if bin/ is generated)
+#   - gyte-transcript (offline: --help + --dry-run only)
 #
 # NOTE:
 # - Shellcheck gate is already enforced by the CI workflow step "Shellcheck scripts".
@@ -41,6 +42,7 @@ need rm
 [[ -x "$ROOT/scripts/gyte-lint" ]] || die "missing or not executable: scripts/gyte-lint"
 [[ -x "$ROOT/scripts/gyte-digest" ]] || die "missing or not executable: scripts/gyte-digest"
 [[ -x "$ROOT/scripts/gyte-install" ]] || die "missing or not executable: scripts/gyte-install"
+[[ -x "$ROOT/scripts/gyte-transcript" ]] || die "missing or not executable: scripts/gyte-transcript"
 
 # Make repo commands available (still useful if some scripts call others).
 export PATH="$ROOT/bin:$ROOT/scripts:$PATH"
@@ -473,12 +475,79 @@ set -e
   sed -n '1,200p' "$TMPDIR_SMOKE/install_bad.stderr" >&2 || true
   die "expected rc=2 for unknown arg, got rc=$RC"
 }
-[[ ! -s "$TMPDIR_SMOKE/install_bad.stderr" ]] || true
 grep -q "Unknown argument" "$TMPDIR_SMOKE/install_bad.stderr" || {
   echo "[smoke] DEBUG: gyte-install --nope stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/install_bad.stderr" >&2 || true
   die "expected 'Unknown argument' in stderr for unknown arg"
 }
 ok "gyte-install: unknown-arg contract (rc=2, stderr has Unknown argument) OK"
+
+# 8) gyte-transcript deterministic contracts (OFFLINE: --help + --dry-run only)
+
+# 8.1) --help contract
+set +e
+"$ROOT/scripts/gyte-transcript" --help >"$TMPDIR_SMOKE/transcript_help.stdout" 2>"$TMPDIR_SMOKE/transcript_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-transcript --help, got rc=$RC"
+grep -q "gyte-transcript" "$TMPDIR_SMOKE/transcript_help.stdout" || {
+  echo "[smoke] DEBUG: gyte-transcript --help stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_help.stdout" >&2 || true
+  die "expected 'gyte-transcript' in gyte-transcript --help stdout"
+}
+[[ ! -s "$TMPDIR_SMOKE/transcript_help.stderr" ]] || {
+  echo "[smoke] DEBUG: gyte-transcript --help stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_help.stderr" >&2 || true
+  die "expected empty stderr for gyte-transcript --help"
+}
+ok "gyte-transcript: --help contract (rc=0, stdout ok, stderr empty) OK"
+
+# 8.2) --dry-run prints yt-dlp command and exits 0 (no network)
+set +e
+"$ROOT/scripts/gyte-transcript" --dry-run "https://example.com/foo" >"$TMPDIR_SMOKE/transcript_dry.stdout" 2>"$TMPDIR_SMOKE/transcript_dry.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-transcript --dry-run stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_dry.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-transcript --dry-run stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_dry.stderr" >&2 || true
+  die "expected rc=0 for gyte-transcript --dry-run, got rc=$RC"
+}
+grep -q "yt-dlp" "$TMPDIR_SMOKE/transcript_dry.stdout" || {
+  echo "[smoke] DEBUG: gyte-transcript --dry-run stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_dry.stdout" >&2 || true
+  die "expected 'yt-dlp' in gyte-transcript --dry-run stdout"
+}
+grep -q -- "--write-auto-subs" "$TMPDIR_SMOKE/transcript_dry.stdout" || {
+  echo "[smoke] DEBUG: gyte-transcript --dry-run stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_dry.stdout" >&2 || true
+  die "expected '--write-auto-subs' in gyte-transcript --dry-run stdout"
+}
+[[ ! -s "$TMPDIR_SMOKE/transcript_dry.stderr" ]] || {
+  echo "[smoke] DEBUG: gyte-transcript --dry-run stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_dry.stderr" >&2 || true
+  die "expected empty stderr for gyte-transcript --dry-run"
+}
+ok "gyte-transcript: --dry-run contract (rc=0, stdout has yt-dlp + --write-auto-subs, stderr empty) OK"
+
+# 8.3) unknown arg -> rc=2 + Unknown argument on stderr
+set +e
+"$ROOT/scripts/gyte-transcript" --nope >"$TMPDIR_SMOKE/transcript_bad.stdout" 2>"$TMPDIR_SMOKE/transcript_bad.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || {
+  echo "[smoke] DEBUG: gyte-transcript --nope stdout:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/transcript_bad.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-transcript --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_bad.stderr" >&2 || true
+  die "expected rc=2 for gyte-transcript unknown arg, got rc=$RC"
+}
+grep -q "Unknown argument" "$TMPDIR_SMOKE/transcript_bad.stderr" || {
+  echo "[smoke] DEBUG: gyte-transcript --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_bad.stderr" >&2 || true
+  die "expected 'Unknown argument' in stderr for gyte-transcript unknown arg"
+}
+ok "gyte-transcript: unknown-arg contract (rc=2, stderr has Unknown argument) OK"
 
 ok "SMOKE TEST PASSED"
