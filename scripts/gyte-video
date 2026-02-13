@@ -36,7 +36,7 @@ fi
 if [ $# -lt 1 ]; then
   echo "Uso: $0 URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
   echo "Esempio: $0 'https://www.youtube.com/watch?v=XXXX'" >&2
-  exit 1
+  exit 2
 fi
 
 URL="$1"

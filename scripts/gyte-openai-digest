@@ -4,6 +4,9 @@ import os
 import re
 import sys
 
+from typing import cast
+from openai.types.chat import ChatCompletionMessageParam
+
 
 def eprint(*a, **k):
     print(*a, file=sys.stderr, **k)
@@ -103,7 +106,7 @@ def openai_chat(model: str, messages: list[dict], temperature: float = 0.2) -> s
     client = OpenAI()
     resp = client.chat.completions.create(
         model=model,
-        messages=messages,
+        messages=cast(list[ChatCompletionMessageParam], messages),
         temperature=temperature,
     )
     return (resp.choices[0].message.content or "").strip()
@@ -175,7 +178,7 @@ def main() -> int:
     api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
         eprint("[gyte-openai-digest] ERRORE: manca OPENAI_API_KEY nell'ambiente")
-        return 2
+        return 1
 
     if args.depth < 0:
         args.depth = 0

@@ -548,16 +548,16 @@ grep -q "Uso:" "$TMPDIR_SMOKE/transcript_pl_help.all" || {
 }
 ok "gyte-transcript-pl: --help contract (rc=0, output ok) OK"
 
-# 9.2) missing URL -> usage, rc=1
+# 9.2) missing URL -> usage, rc=2
 set +e
 "$ROOT/scripts/gyte-transcript-pl" >"$TMPDIR_SMOKE/transcript_pl_noargs.stdout" 2>"$TMPDIR_SMOKE/transcript_pl_noargs.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 1 ]] || {
+[[ "$RC" -eq 2 ]] || {
   echo "[smoke] DEBUG: gyte-transcript-pl (no args) output:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/transcript_pl_noargs.stdout" >&2 || true
   sed -n '1,200p' "$TMPDIR_SMOKE/transcript_pl_noargs.stderr" >&2 || true
-  die "expected rc=1 for gyte-transcript-pl with no args, got rc=$RC"
+  die "expected rc=2 for gyte-transcript-pl with no args, got rc=$RC"
 }
 
 cat "$TMPDIR_SMOKE/transcript_pl_noargs.stdout" "$TMPDIR_SMOKE/transcript_pl_noargs.stderr" >"$TMPDIR_SMOKE/transcript_pl_noargs.all" || true
@@ -566,7 +566,7 @@ grep -q "Uso:" "$TMPDIR_SMOKE/transcript_pl_noargs.all" || {
   sed -n '1,200p' "$TMPDIR_SMOKE/transcript_pl_noargs.all" >&2 || true
   die "expected 'Uso:' in gyte-transcript-pl no-args output"
 }
-ok "gyte-transcript-pl: no-args usage contract (rc=1, output has Uso:) OK"
+ok "gyte-transcript-pl: no-args usage contract (rc=2, output has Uso:) OK"
 
 # 9.3) flag as URL -> rc=1 + specific error
 set +e
@@ -746,6 +746,28 @@ if grep -q "  " "$TMPDIR_SMOKE/reflow_ai.stdout"; then
 fi
 ok "gyte-reflow-text: --ai-friendly stdin contract (rc=0, no double spaces) OK"
 
+# 11.2b) stdin via explicit "-" inputfile: must behave like stdin redirection
+set +e
+"$ROOT/scripts/gyte-reflow-text" --ai-friendly - <"$IN1" >"$TMPDIR_SMOKE/reflow_ai_dash.stdout" 2>"$TMPDIR_SMOKE/reflow_ai_dash.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-reflow-text --ai-friendly - stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_ai_dash.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-reflow-text --ai-friendly - stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_ai_dash.stderr" >&2 || true
+  die "expected rc=0 for gyte-reflow-text --ai-friendly - (stdin), got rc=$RC"
+}
+
+cmp -s "$TMPDIR_SMOKE/reflow_ai.stdout" "$TMPDIR_SMOKE/reflow_ai_dash.stdout" || {
+  echo "[smoke] DEBUG: reflow_ai (stdin) stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_ai.stdout" >&2 || true
+  echo "[smoke] DEBUG: reflow_ai_dash ('-') stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/reflow_ai_dash.stdout" >&2 || true
+  die "expected identical stdout between gyte-reflow-text --ai-friendly (stdin) and --ai-friendly -"
+}
+ok "gyte-reflow-text: --ai-friendly '-' stdin contract (rc=0, stdout identical) OK"
+
 # 11.3) --strict-utf8: must not crash on invalid bytes; may emit warning to stderr; stdout must be produced
 # create invalid UTF-8 byte sequence (0xFF is invalid in UTF-8)
 IN2="$TMPDIR_SMOKE/reflow_in2.bin"
@@ -775,17 +797,17 @@ if grep -Eqi "traceback|fatal|segfault" "$TMPDIR_SMOKE/reflow_utf8.stderr"; then
 fi
 ok "gyte-reflow-text: --strict-utf8 contract (rc=0, stdout produced) OK"
 
-# 11.4) unknown option -> rc=1, stderr mentions unrecognized option
+# 11.4) unknown option -> rc=2, stderr mentions unrecognized option
 set +e
 "$ROOT/scripts/gyte-reflow-text" --nope >"$TMPDIR_SMOKE/reflow_bad.stdout" 2>"$TMPDIR_SMOKE/reflow_bad.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 1 ]] || {
+[[ "$RC" -eq 2 ]] || {
   echo "[smoke] DEBUG: gyte-reflow-text --nope stdout:" >&2
   sed -n '1,120p' "$TMPDIR_SMOKE/reflow_bad.stdout" >&2 || true
   echo "[smoke] DEBUG: gyte-reflow-text --nope stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/reflow_bad.stderr" >&2 || true
-  die "expected rc=1 for gyte-reflow-text unknown option, got rc=$RC"
+  die "expected rc=2 for gyte-reflow-text unknown option, got rc=$RC"
 }
 
 grep -Eqi "opzione sconosciuta|opzione non riconosciuta|unknown option" "$TMPDIR_SMOKE/reflow_bad.stderr" || {
@@ -793,7 +815,7 @@ grep -Eqi "opzione sconosciuta|opzione non riconosciuta|unknown option" "$TMPDIR
   sed -n '1,200p' "$TMPDIR_SMOKE/reflow_bad.stderr" >&2 || true
   die "expected unrecognized-option message in gyte-reflow-text stderr"
 }
-ok "gyte-reflow-text: unknown-option contract (rc=1, stderr message) OK"
+ok "gyte-reflow-text: unknown-option contract (rc=2, stderr message) OK"
 
 # 12) gyte-whisper-local deterministic contracts (OFFLINE)
 
@@ -845,19 +867,19 @@ set +e
 "$ROOT/scripts/gyte-whisper-local" "$TMPDIR_SMOKE/does-not-exist.wav" >"$TMPDIR_SMOKE/whisper_missing.stdout" 2>"$TMPDIR_SMOKE/whisper_missing.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 2 ]] || {
+[[ "$RC" -eq 1 ]] || {
   echo "[smoke] DEBUG: gyte-whisper-local missing-file stdout:" >&2
   sed -n '1,120p' "$TMPDIR_SMOKE/whisper_missing.stdout" >&2 || true
   echo "[smoke] DEBUG: gyte-whisper-local missing-file stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/whisper_missing.stderr" >&2 || true
-  die "expected rc=2 for gyte-whisper-local missing file, got rc=$RC"
+  die "expected rc=1 for gyte-whisper-local missing file, got rc=$RC"
 }
 grep -Eqi "file non trovato|not found|missing" "$TMPDIR_SMOKE/whisper_missing.stderr" || {
   echo "[smoke] DEBUG: gyte-whisper-local missing-file stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/whisper_missing.stderr" >&2 || true
   die "expected 'file not found' message in gyte-whisper-local stderr"
 }
-ok "gyte-whisper-local: missing-file contract (rc=2, stderr message) OK"
+ok "gyte-whisper-local: missing-file contract (rc=1, stderr message) OK"
 
 # 13) gyte-video deterministic contracts (OFFLINE)
 
@@ -883,17 +905,17 @@ grep -q "GYTE_VIDEO_FORMAT" "$TMPDIR_SMOKE/video_help.all" || {
 }
 ok "gyte-video: --help contract (rc=0, output ok) OK"
 
-# 13.2) no args -> usage, rc=1
+# 13.2) no args -> usage, rc=2
 set +e
 "$ROOT/scripts/gyte-video" >"$TMPDIR_SMOKE/video_noargs.stdout" 2>"$TMPDIR_SMOKE/video_noargs.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 1 ]] || {
+[[ "$RC" -eq 2 ]] || {
   echo "[smoke] DEBUG: gyte-video (no args) stdout:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/video_noargs.stdout" >&2 || true
   echo "[smoke] DEBUG: gyte-video (no args) stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/video_noargs.stderr" >&2 || true
-  die "expected rc=1 for gyte-video with no args, got rc=$RC"
+  die "expected rc=2 for gyte-video with no args, got rc=$RC"
 }
 cat "$TMPDIR_SMOKE/video_noargs.stdout" "$TMPDIR_SMOKE/video_noargs.stderr" >"$TMPDIR_SMOKE/video_noargs.all" || true
 grep -q "Uso:" "$TMPDIR_SMOKE/video_noargs.all" || {
@@ -901,7 +923,7 @@ grep -q "Uso:" "$TMPDIR_SMOKE/video_noargs.all" || {
   sed -n '1,200p' "$TMPDIR_SMOKE/video_noargs.all" >&2 || true
   die "expected 'Uso:' in gyte-video no-args output"
 }
-ok "gyte-video: no-args usage contract (rc=1, output has Uso:) OK"
+ok "gyte-video: no-args usage contract (rc=2, output has Uso:) OK"
 
 # 13.3) flag-as-url deterministic error -> rc=1 + specific message
 set +e
@@ -946,17 +968,17 @@ grep -q -- "--dry-run" "$TMPDIR_SMOKE/audio_help.all" || {
 }
 ok "gyte-audio: --help contract (rc=0, output ok) OK"
 
-# 14.2) no args -> usage, rc=1
+# 14.2) no args -> usage, rc=2
 set +e
 "$ROOT/scripts/gyte-audio" >"$TMPDIR_SMOKE/audio_noargs.stdout" 2>"$TMPDIR_SMOKE/audio_noargs.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 1 ]] || {
+[[ "$RC" -eq 2 ]] || {
   echo "[smoke] DEBUG: gyte-audio (no args) stdout:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/audio_noargs.stdout" >&2 || true
   echo "[smoke] DEBUG: gyte-audio (no args) stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/audio_noargs.stderr" >&2 || true
-  die "expected rc=1 for gyte-audio with no args, got rc=$RC"
+  die "expected rc=2 for gyte-audio with no args, got rc=$RC"
 }
 cat "$TMPDIR_SMOKE/audio_noargs.stdout" "$TMPDIR_SMOKE/audio_noargs.stderr" >"$TMPDIR_SMOKE/audio_noargs.all" || true
 grep -q "Uso:" "$TMPDIR_SMOKE/audio_noargs.all" || {
@@ -964,26 +986,26 @@ grep -q "Uso:" "$TMPDIR_SMOKE/audio_noargs.all" || {
   sed -n '1,200p' "$TMPDIR_SMOKE/audio_noargs.all" >&2 || true
   die "expected 'Uso:' in gyte-audio no-args output"
 }
-ok "gyte-audio: no-args usage contract (rc=1, output has Uso:) OK"
+ok "gyte-audio: no-args usage contract (rc=2, output has Uso:) OK"
 
 # 14.3) unknown option before URL -> rc=1 + specific message on stderr
 set +e
 "$ROOT/scripts/gyte-audio" --nope >"$TMPDIR_SMOKE/audio_bad.stdout" 2>"$TMPDIR_SMOKE/audio_bad.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 1 ]] || {
+[[ "$RC" -eq 2 ]] || {
   echo "[smoke] DEBUG: gyte-audio --nope stdout:" >&2
   sed -n '1,120p' "$TMPDIR_SMOKE/audio_bad.stdout" >&2 || true
   echo "[smoke] DEBUG: gyte-audio --nope stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/audio_bad.stderr" >&2 || true
-  die "expected rc=1 for gyte-audio unknown option before URL, got rc=$RC"
+  die "expected rc=2 for gyte-audio unknown option before URL, got rc=$RC"
 }
 grep -q "Opzione sconosciuta prima dell'URL" "$TMPDIR_SMOKE/audio_bad.stderr" || {
   echo "[smoke] DEBUG: gyte-audio --nope stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/audio_bad.stderr" >&2 || true
   die "expected 'Opzione sconosciuta prima dell'URL' in gyte-audio stderr"
 }
-ok "gyte-audio: unknown-option-before-url contract (rc=1, stderr message) OK"
+ok "gyte-audio: unknown-option-before-url contract (rc=2, stderr message) OK"
 
 # 14.4) --dry-run --json must be deterministic and not require yt-dlp execution
 set +e
@@ -1080,17 +1102,17 @@ set +e
 "$ROOT/scripts/gyte-merge-pl" --nope >"$TMPDIR_SMOKE/mergepl_bad.stdout" 2>"$TMPDIR_SMOKE/mergepl_bad.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 1 ]] || {
+[[ "$RC" -eq 2 ]] || {
   echo "[smoke] DEBUG: gyte-merge-pl --nope stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/mergepl_bad.stderr" >&2 || true
-  die "expected rc=1 for gyte-merge-pl unknown option, got rc=$RC"
+  die "expected rc=2 for gyte-merge-pl unknown option, got rc=$RC"
 }
 grep -Eqi "opzione sconosciuta|non riconosciut|unknown" "$TMPDIR_SMOKE/mergepl_bad.stderr" || {
   echo "[smoke] DEBUG: gyte-merge-pl --nope stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/mergepl_bad.stderr" >&2 || true
   die "expected unrecognized-option message in gyte-merge-pl stderr"
 }
-ok "gyte-merge-pl: unknown-option contract (rc=1, stderr message) OK"
+ok "gyte-merge-pl: unknown-option contract (rc=2, stderr message) OK"
 
 # 16) gyte-doctor deterministic contracts (OFFLINE; tolerant to CI environment)
 
@@ -1225,13 +1247,13 @@ set +e
 OPENAI_API_KEY="" "$ROOT/scripts/gyte-openai-digest" >"$TMPDIR_SMOKE/openai_d_nokey.stdout" 2>"$TMPDIR_SMOKE/openai_d_nokey.stderr"
 RC=$?
 set -e
-[[ "$RC" -eq 2 ]] || {
+[[ "$RC" -eq 1 ]] || {
   echo "[smoke] DEBUG: gyte-openai-digest (no key) stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/openai_d_nokey.stderr" >&2 || true
-  die "expected rc=2 for gyte-openai-digest missing OPENAI_API_KEY, got rc=$RC"
+  die "expected rc=1 for gyte-openai-digest missing OPENAI_API_KEY, got rc=$RC"
 }
 grep -q "OPENAI_API_KEY" "$TMPDIR_SMOKE/openai_d_nokey.stderr" || die "expected OPENAI_API_KEY mention in gyte-openai-digest missing-key stderr"
-ok "gyte-openai-digest: missing-key contract (rc=2, stderr mentions OPENAI_API_KEY) OK"
+ok "gyte-openai-digest: missing-key contract (rc=1, stderr mentions OPENAI_API_KEY) OK"
 
 # 18.3) unknown arg -> rc=2 + unrecognized arguments on stderr
 set +e
