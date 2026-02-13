@@ -587,4 +587,96 @@ grep -q "l'URL non può iniziare con '-'" "$TMPDIR_SMOKE/transcript_pl_flag.stde
 }
 ok "gyte-transcript-pl: flag-as-url error contract (rc=1, stderr message) OK"
 
+# 10) gyte-translate deterministic contracts (OFFLINE)
+
+[[ -x "$ROOT/scripts/gyte-translate" ]] || die "missing or not executable: scripts/gyte-translate"
+
+# 10.1) --help contract (rc=0, output contains stable tokens)
+set +e
+"$ROOT/scripts/gyte-translate" --help >"$TMPDIR_SMOKE/translate_help.stdout" 2>"$TMPDIR_SMOKE/translate_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-translate --help, got rc=$RC"
+
+cat "$TMPDIR_SMOKE/translate_help.stdout" "$TMPDIR_SMOKE/translate_help.stderr" >"$TMPDIR_SMOKE/translate_help.all" || true
+grep -q "Uso:" "$TMPDIR_SMOKE/translate_help.all" || {
+  echo "[smoke] DEBUG: gyte-translate --help output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/translate_help.all" >&2 || true
+  die "expected 'Uso:' in gyte-translate --help output"
+}
+grep -q -- "--engine" "$TMPDIR_SMOKE/translate_help.all" || {
+  echo "[smoke] DEBUG: gyte-translate --help output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/translate_help.all" >&2 || true
+  die "expected '--engine' in gyte-translate --help output"
+}
+ok "gyte-translate: --help contract (rc=0, output ok) OK"
+
+# 10.2) missing input file -> rc=1, stderr mentions not found
+set +e
+"$ROOT/scripts/gyte-translate" "$TMPDIR_SMOKE/does-not-exist.txt" --to en >"$TMPDIR_SMOKE/translate_missing.stdout" 2>"$TMPDIR_SMOKE/translate_missing.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-translate missing-file stdout:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/translate_missing.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-translate missing-file stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/translate_missing.stderr" >&2 || true
+  die "expected rc=1 for gyte-translate missing input, got rc=$RC"
+}
+[[ ! -s "$TMPDIR_SMOKE/translate_missing.stdout" ]] || die "expected empty stdout for missing input file"
+grep -Eqi "non trovato|not found|missing file" "$TMPDIR_SMOKE/translate_missing.stderr" || {
+  echo "[smoke] DEBUG: gyte-translate missing-file stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/translate_missing.stderr" >&2 || true
+  die "expected 'not found' message in stderr for missing input file"
+}
+ok "gyte-translate: missing-input contract (rc=1, stderr message) OK"
+
+# 10.3) --dry-run prints argos-translate command, rc=0, stderr empty
+IN_TXT="$TMPDIR_SMOKE/translate_in.txt"
+printf "ciao mondo\n" >"$IN_TXT"
+
+set +e
+"$ROOT/scripts/gyte-translate" "$IN_TXT" --from it --to en --dry-run >"$TMPDIR_SMOKE/translate_dry.stdout" 2>"$TMPDIR_SMOKE/translate_dry.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-translate --dry-run stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/translate_dry.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-translate --dry-run stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/translate_dry.stderr" >&2 || true
+  die "expected rc=0 for gyte-translate --dry-run, got rc=$RC"
+}
+grep -q "argos-translate" "$TMPDIR_SMOKE/translate_dry.stdout" || {
+  echo "[smoke] DEBUG: gyte-translate --dry-run stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/translate_dry.stdout" >&2 || true
+  die "expected 'argos-translate' in gyte-translate --dry-run stdout"
+}
+grep -q -- "--from it" "$TMPDIR_SMOKE/translate_dry.stdout" || die "expected '--from it' in dry-run stdout"
+grep -q -- "--to en" "$TMPDIR_SMOKE/translate_dry.stdout" || die "expected '--to en' in dry-run stdout"
+[[ ! -s "$TMPDIR_SMOKE/translate_dry.stderr" ]] || {
+  echo "[smoke] DEBUG: gyte-translate --dry-run stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/translate_dry.stderr" >&2 || true
+  die "expected empty stderr for gyte-translate --dry-run"
+}
+ok "gyte-translate: --dry-run contract (rc=0, stdout has argos-translate, stderr empty) OK"
+
+# 10.4) unknown arg -> rc=2 + Unknown argument on stderr
+set +e
+"$ROOT/scripts/gyte-translate" --nope >"$TMPDIR_SMOKE/translate_bad.stdout" 2>"$TMPDIR_SMOKE/translate_bad.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || {
+  echo "[smoke] DEBUG: gyte-translate --nope stdout:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/translate_bad.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-translate --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/translate_bad.stderr" >&2 || true
+  die "expected rc=2 for gyte-translate unknown arg, got rc=$RC"
+}
+grep -q "Unknown argument" "$TMPDIR_SMOKE/translate_bad.stderr" || {
+  echo "[smoke] DEBUG: gyte-translate --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/translate_bad.stderr" >&2 || true
+  die "expected 'Unknown argument' in stderr for gyte-translate unknown arg"
+}
+ok "gyte-translate: unknown-arg contract (rc=2, stderr message) OK"
+
 ok "SMOKE TEST PASSED"
