@@ -7,11 +7,13 @@ set -euo pipefail
 # - Validate deterministic contracts for:
 #   - gyte-explain invalid_url behavior
 #   - gyte-digest validation (browser whitelist, cookies fail-fast) via dry-run
+#   - gyte-lint --manifest contracts (stdlib only)
+#   - gyte-install (non-destructive, --dry-run only; CI-safe even if bin/ is generated)
 #
 # NOTE:
 # - Shellcheck gate is already enforced by the CI workflow step "Shellcheck scripts".
 # - This smoke must NOT depend on user-local installs or live YouTube sessions.
-# - Wrappers under ./bin are OPTIONAL in CI; smoke calls ./scripts directly.
+# - Wrappers under ./bin may be generated; smoke calls ./scripts directly and bootstraps bin/ only if needed.
 
 ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -30,11 +32,15 @@ need stat
 need sed
 need ls
 need grep
+need chmod
+need mkdir
+need rm
 
 # Ensure scripts exist (smoke calls scripts directly)
 [[ -x "$ROOT/scripts/gyte-explain" ]] || die "missing or not executable: scripts/gyte-explain"
 [[ -x "$ROOT/scripts/gyte-lint" ]] || die "missing or not executable: scripts/gyte-lint"
 [[ -x "$ROOT/scripts/gyte-digest" ]] || die "missing or not executable: scripts/gyte-digest"
+[[ -x "$ROOT/scripts/gyte-install" ]] || die "missing or not executable: scripts/gyte-install"
 
 # Make repo commands available (still useful if some scripts call others).
 export PATH="$ROOT/bin:$ROOT/scripts:$PATH"
@@ -43,7 +49,26 @@ ok "repo root: $ROOT"
 
 # 0) gyte-digest offline validation (dry-run only)
 TMPDIR_SMOKE="$(mktemp -d -t gyte-smoke.XXXXXX)"
-cleanup_smoke() { rm -rf "$TMPDIR_SMOKE" 2>/dev/null || true; }
+
+# Track temporary bootstrap of bin/ wrappers (CI-safe)
+BOOTSTRAPPED_BIN=0
+BOOTSTRAP_DUMMY=""
+
+cleanup_smoke() {
+  # Clean temporary wrapper if we created it
+  if [[ "$BOOTSTRAPPED_BIN" -eq 1 ]] && [[ -n "$BOOTSTRAP_DUMMY" ]]; then
+    rm -f -- "$BOOTSTRAP_DUMMY" 2>/dev/null || true
+  fi
+  # If we created an empty bin/ directory, leave it (non-destructive) OR remove if empty.
+  # We remove only if empty to avoid touching real repo state.
+  if [[ "$BOOTSTRAPPED_BIN" -eq 1 ]] && [[ -d "$ROOT/bin" ]]; then
+    if ! find "$ROOT/bin" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
+      rmdir -- "$ROOT/bin" 2>/dev/null || true
+    fi
+  fi
+
+  rm -rf "$TMPDIR_SMOKE" 2>/dev/null || true
+}
 trap cleanup_smoke EXIT
 
 ANON="$TMPDIR_SMOKE/anon.cookies"
@@ -375,4 +400,85 @@ grep -q "\[ERR\]" "$TMPDIR_SMOKE/lint_ko.stderr" || {
   die "expected at least one [ERR] in stderr for KO fixture"
 }
 ok "gyte-lint: --manifest PATH KO fixture (rc=2, stderr has [ERR]/[FAIL]) OK"
+
+# 7) gyte-install deterministic contracts (NON-DESTRUCTIVE: --dry-run only)
+#
+# gyte-install enumerates wrappers under $REPO_ROOT/bin/gyte-*.
+# In CI, bin/ may be generated and absent. For smoke purposes, we bootstrap a minimal bin/ with a dummy wrapper
+# ONLY if needed, and clean it up afterward.
+
+if [[ ! -d "$ROOT/bin" ]] || ! find "$ROOT/bin" -maxdepth 1 -type f -name 'gyte-*' -print -quit 2>/dev/null | grep -q .; then
+  BOOTSTRAPPED_BIN=1
+  mkdir -p "$ROOT/bin"
+  BOOTSTRAP_DUMMY="$ROOT/bin/gyte-smoke-dummy"
+  cat >"$BOOTSTRAP_DUMMY" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "gyte-smoke-dummy"
+EOF
+  chmod +x "$BOOTSTRAP_DUMMY"
+  ok "bootstrapped minimal bin/ wrapper for gyte-install smoke: $BOOTSTRAP_DUMMY"
+fi
+
+# 7.1) --help contract
+set +e
+"$ROOT/scripts/gyte-install" --help >"$TMPDIR_SMOKE/install_help.stdout" 2>"$TMPDIR_SMOKE/install_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-install --help, got rc=$RC"
+grep -q "gyte-install - install" "$TMPDIR_SMOKE/install_help.stdout" || {
+  echo "[smoke] DEBUG: gyte-install --help stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/install_help.stdout" >&2 || true
+  die "expected 'gyte-install - install' in gyte-install --help stdout"
+}
+[[ ! -s "$TMPDIR_SMOKE/install_help.stderr" ]] || {
+  echo "[smoke] DEBUG: gyte-install --help stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/install_help.stderr" >&2 || true
+  die "expected empty stderr for gyte-install --help"
+}
+ok "gyte-install: --help contract (rc=0, stdout ok, stderr empty) OK"
+
+# 7.2) --dry-run --prefix TMP (must not modify filesystem outside TMP; only prints)
+PFX="$TMPDIR_SMOKE/prefix"
+set +e
+"$ROOT/scripts/gyte-install" --dry-run --prefix "$PFX" >"$TMPDIR_SMOKE/install_dry.stdout" 2>"$TMPDIR_SMOKE/install_dry.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-install --dry-run stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/install_dry.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-install --dry-run stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/install_dry.stderr" >&2 || true
+  die "expected rc=0 for gyte-install --dry-run, got rc=$RC"
+}
+grep -q "GYTE install" "$TMPDIR_SMOKE/install_dry.stdout" || die "expected 'GYTE install' in dry-run stdout"
+grep -q "\[dry-run\] " "$TMPDIR_SMOKE/install_dry.stdout" || die "expected '[dry-run]' lines in dry-run stdout"
+grep -q "Installed " "$TMPDIR_SMOKE/install_dry.stdout" || die "expected 'Installed' summary in dry-run stdout"
+[[ ! -s "$TMPDIR_SMOKE/install_dry.stderr" ]] || {
+  echo "[smoke] DEBUG: gyte-install --dry-run stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/install_dry.stderr" >&2 || true
+  die "expected empty stderr for gyte-install --dry-run"
+}
+ok "gyte-install: --dry-run contract (rc=0, stdout has dry-run + Installed, stderr empty) OK"
+
+# 7.3) unknown arg -> rc=2 + usage on stderr
+set +e
+"$ROOT/scripts/gyte-install" --nope >"$TMPDIR_SMOKE/install_bad.stdout" 2>"$TMPDIR_SMOKE/install_bad.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || {
+  echo "[smoke] DEBUG: gyte-install --nope stdout:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/install_bad.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-install --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/install_bad.stderr" >&2 || true
+  die "expected rc=2 for unknown arg, got rc=$RC"
+}
+[[ ! -s "$TMPDIR_SMOKE/install_bad.stderr" ]] || true
+grep -q "Unknown argument" "$TMPDIR_SMOKE/install_bad.stderr" || {
+  echo "[smoke] DEBUG: gyte-install --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/install_bad.stderr" >&2 || true
+  die "expected 'Unknown argument' in stderr for unknown arg"
+}
+ok "gyte-install: unknown-arg contract (rc=2, stderr has Unknown argument) OK"
+
 ok "SMOKE TEST PASSED"
