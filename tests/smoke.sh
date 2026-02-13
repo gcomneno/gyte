@@ -1013,4 +1013,83 @@ head -c 1 "$TMPDIR_SMOKE/audio_dry_json.stdout" | grep -q '{' || {
 }
 ok "gyte-audio: --dry-run --json contract (rc=0, stdout json-like, stderr empty) OK"
 
+# 15) gyte-merge-pl deterministic contracts (OFFLINE)
+
+[[ -x "$ROOT/scripts/gyte-merge-pl" ]] || die "missing or not executable: scripts/gyte-merge-pl"
+
+# 15.1) --help contract
+set +e
+"$ROOT/scripts/gyte-merge-pl" --help >"$TMPDIR_SMOKE/mergepl_help.stdout" 2>"$TMPDIR_SMOKE/mergepl_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-merge-pl --help, got rc=$RC"
+
+cat "$TMPDIR_SMOKE/mergepl_help.stdout" "$TMPDIR_SMOKE/mergepl_help.stderr" >"$TMPDIR_SMOKE/mergepl_help.all" || true
+grep -q "Uso:" "$TMPDIR_SMOKE/mergepl_help.all" || die "expected 'Uso:' in gyte-merge-pl --help output"
+grep -q -- "--dry-run" "$TMPDIR_SMOKE/mergepl_help.all" || die "expected '--dry-run' in gyte-merge-pl --help output"
+ok "gyte-merge-pl: --help contract (rc=0, output ok) OK"
+
+# 15.2) prepare deterministic playlist dir fixture
+PLDIR="$TMPDIR_SMOKE/yt-playlist-fixture"
+mkdir -p "$PLDIR"
+printf "Titolo A\n" >"$PLDIR/001 - alpha.txt"
+printf "Titolo B\n" >"$PLDIR/002 - beta.txt"
+
+# 15.3) --dry-run must not write files; output should mention planned merge
+# also protect repo root from accidental gyte.merged.txt creation
+rm -f "$ROOT/gyte.merged.txt" || true
+
+set +e
+"$ROOT/scripts/gyte-merge-pl" --dry-run "$PLDIR" >"$TMPDIR_SMOKE/mergepl_dry.stdout" 2>"$TMPDIR_SMOKE/mergepl_dry.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-merge-pl --dry-run stdout:" >&2
+  sed -n '1,220p' "$TMPDIR_SMOKE/mergepl_dry.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-merge-pl --dry-run stderr:" >&2
+  sed -n '1,220p' "$TMPDIR_SMOKE/mergepl_dry.stderr" >&2 || true
+  die "expected rc=0 for gyte-merge-pl --dry-run, got rc=$RC"
+}
+# Must not create output file in repo root
+[[ ! -f "$ROOT/gyte.merged.txt" ]] || die "gyte-merge-pl --dry-run must not create $ROOT/gyte.merged.txt"
+# Light token checks (avoid brittle exact output)
+grep -q "Output previsto" "$TMPDIR_SMOKE/mergepl_dry.stdout" || {
+  echo "[smoke] DEBUG: gyte-merge-pl --dry-run stdout:" >&2
+  sed -n '1,220p' "$TMPDIR_SMOKE/mergepl_dry.stdout" >&2 || true
+  die "expected 'Output previsto' in gyte-merge-pl --dry-run stdout"
+}
+ok "gyte-merge-pl: --dry-run contract (rc=0, no writes, stdout ok) OK"
+
+# 15.4) --stdout should emit merged content to stdout, rc=0
+set +e
+"$ROOT/scripts/gyte-merge-pl" --stdout "$PLDIR" >"$TMPDIR_SMOKE/mergepl_stdout.out" 2>"$TMPDIR_SMOKE/mergepl_stdout.err"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-merge-pl --stdout out:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/mergepl_stdout.out" >&2 || true
+  echo "[smoke] DEBUG: gyte-merge-pl --stdout err:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/mergepl_stdout.err" >&2 || true
+  die "expected rc=0 for gyte-merge-pl --stdout, got rc=$RC"
+}
+[[ -s "$TMPDIR_SMOKE/mergepl_stdout.out" ]] || die "expected non-empty stdout for gyte-merge-pl --stdout"
+ok "gyte-merge-pl: --stdout contract (rc=0, stdout non-empty) OK"
+
+# 15.5) unknown option -> rc=1 + message on stderr
+set +e
+"$ROOT/scripts/gyte-merge-pl" --nope >"$TMPDIR_SMOKE/mergepl_bad.stdout" 2>"$TMPDIR_SMOKE/mergepl_bad.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-merge-pl --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/mergepl_bad.stderr" >&2 || true
+  die "expected rc=1 for gyte-merge-pl unknown option, got rc=$RC"
+}
+grep -Eqi "opzione sconosciuta|non riconosciut|unknown" "$TMPDIR_SMOKE/mergepl_bad.stderr" || {
+  echo "[smoke] DEBUG: gyte-merge-pl --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/mergepl_bad.stderr" >&2 || true
+  die "expected unrecognized-option message in gyte-merge-pl stderr"
+}
+ok "gyte-merge-pl: unknown-option contract (rc=1, stderr message) OK"
+
 ok "SMOKE TEST PASSED"
