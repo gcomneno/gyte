@@ -922,4 +922,95 @@ grep -q "l'URL non può iniziare con '-'" "$TMPDIR_SMOKE/video_flag.stderr" || {
 }
 ok "gyte-video: flag-as-url error contract (rc=1, stderr message) OK"
 
+# 14) gyte-audio deterministic contracts (OFFLINE)
+
+[[ -x "$ROOT/scripts/gyte-audio" ]] || die "missing or not executable: scripts/gyte-audio"
+
+# 14.1) --help contract
+set +e
+"$ROOT/scripts/gyte-audio" --help >"$TMPDIR_SMOKE/audio_help.stdout" 2>"$TMPDIR_SMOKE/audio_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-audio --help, got rc=$RC"
+
+cat "$TMPDIR_SMOKE/audio_help.stdout" "$TMPDIR_SMOKE/audio_help.stderr" >"$TMPDIR_SMOKE/audio_help.all" || true
+grep -q "Uso:" "$TMPDIR_SMOKE/audio_help.all" || {
+  echo "[smoke] DEBUG: gyte-audio --help output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/audio_help.all" >&2 || true
+  die "expected 'Uso:' in gyte-audio --help output"
+}
+grep -q -- "--dry-run" "$TMPDIR_SMOKE/audio_help.all" || {
+  echo "[smoke] DEBUG: gyte-audio --help output:" >&2
+  sed -n '1,240p' "$TMPDIR_SMOKE/audio_help.all" >&2 || true
+  die "expected '--dry-run' in gyte-audio --help output"
+}
+ok "gyte-audio: --help contract (rc=0, output ok) OK"
+
+# 14.2) no args -> usage, rc=1
+set +e
+"$ROOT/scripts/gyte-audio" >"$TMPDIR_SMOKE/audio_noargs.stdout" 2>"$TMPDIR_SMOKE/audio_noargs.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-audio (no args) stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/audio_noargs.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-audio (no args) stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/audio_noargs.stderr" >&2 || true
+  die "expected rc=1 for gyte-audio with no args, got rc=$RC"
+}
+cat "$TMPDIR_SMOKE/audio_noargs.stdout" "$TMPDIR_SMOKE/audio_noargs.stderr" >"$TMPDIR_SMOKE/audio_noargs.all" || true
+grep -q "Uso:" "$TMPDIR_SMOKE/audio_noargs.all" || {
+  echo "[smoke] DEBUG: gyte-audio (no args) output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/audio_noargs.all" >&2 || true
+  die "expected 'Uso:' in gyte-audio no-args output"
+}
+ok "gyte-audio: no-args usage contract (rc=1, output has Uso:) OK"
+
+# 14.3) unknown option before URL -> rc=1 + specific message on stderr
+set +e
+"$ROOT/scripts/gyte-audio" --nope >"$TMPDIR_SMOKE/audio_bad.stdout" 2>"$TMPDIR_SMOKE/audio_bad.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-audio --nope stdout:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/audio_bad.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-audio --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/audio_bad.stderr" >&2 || true
+  die "expected rc=1 for gyte-audio unknown option before URL, got rc=$RC"
+}
+grep -q "Opzione sconosciuta prima dell'URL" "$TMPDIR_SMOKE/audio_bad.stderr" || {
+  echo "[smoke] DEBUG: gyte-audio --nope stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/audio_bad.stderr" >&2 || true
+  die "expected 'Opzione sconosciuta prima dell'URL' in gyte-audio stderr"
+}
+ok "gyte-audio: unknown-option-before-url contract (rc=1, stderr message) OK"
+
+# 14.4) --dry-run --json must be deterministic and not require yt-dlp execution
+set +e
+"$ROOT/scripts/gyte-audio" --dry-run --json --preset voice "https://example.invalid/watch?v=XXXX" \
+  >"$TMPDIR_SMOKE/audio_dry_json.stdout" 2>"$TMPDIR_SMOKE/audio_dry_json.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || {
+  echo "[smoke] DEBUG: gyte-audio --dry-run --json stdout:" >&2
+  sed -n '1,220p' "$TMPDIR_SMOKE/audio_dry_json.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-audio --dry-run --json stderr:" >&2
+  sed -n '1,220p' "$TMPDIR_SMOKE/audio_dry_json.stderr" >&2 || true
+  die "expected rc=0 for gyte-audio --dry-run --json, got rc=$RC"
+}
+[[ ! -s "$TMPDIR_SMOKE/audio_dry_json.stderr" ]] || {
+  echo "[smoke] DEBUG: gyte-audio --dry-run --json stderr:" >&2
+  sed -n '1,220p' "$TMPDIR_SMOKE/audio_dry_json.stderr" >&2 || true
+  die "expected empty stderr for gyte-audio --dry-run --json"
+}
+# light JSON sanity: either begins with '{' or contains the known key
+head -c 1 "$TMPDIR_SMOKE/audio_dry_json.stdout" | grep -q '{' || {
+  grep -q '"yt_dlp_cmd_string"' "$TMPDIR_SMOKE/audio_dry_json.stdout" || {
+    echo "[smoke] DEBUG: gyte-audio --dry-run --json stdout:" >&2
+    sed -n '1,80p' "$TMPDIR_SMOKE/audio_dry_json.stdout" >&2 || true
+    die "expected JSON-like stdout for gyte-audio --dry-run --json"
+  }
+}
+ok "gyte-audio: --dry-run --json contract (rc=0, stdout json-like, stderr empty) OK"
+
 ok "SMOKE TEST PASSED"
