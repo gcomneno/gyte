@@ -104,7 +104,8 @@ def main() -> None:
     if OpenAI is None:
         eprintln(
             "[ERROR] Il pacchetto 'openai' non è installato.\n"
-            "        Installa con: pip install openai"
+            "        Installa con: pip install openai\n"
+            "        (Richiede anche OPENAI_API_KEY in ambiente.)"
         )
         sys.exit(1)
 
