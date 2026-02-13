@@ -51,9 +51,12 @@ EOF
 }
 
 require_deps() {
-  command -v yt-dlp >/dev/null 2>&1 || die "'yt-dlp' non trovato nel PATH."
-  if ! command -v ffmpeg >/dev/null 2>&1; then
-    warn "'ffmpeg' non trovato nel PATH. L'estrazione audio potrebbe fallire."
+  # In --dry-run non verifichiamo dipendenze runtime: deve restare deterministico e silenzioso.
+  if [ "${DRY_RUN:-0}" -ne 1 ]; then
+    command -v yt-dlp >/dev/null 2>&1 || die "'yt-dlp' non trovato nel PATH."
+    if ! command -v ffmpeg >/dev/null 2>&1; then
+      warn "'ffmpeg' non trovato nel PATH. L'estrazione audio potrebbe fallire."
+    fi
   fi
 }
 
