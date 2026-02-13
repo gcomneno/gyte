@@ -795,4 +795,68 @@ grep -Eqi "opzione sconosciuta|opzione non riconosciuta|unknown option" "$TMPDIR
 }
 ok "gyte-reflow-text: unknown-option contract (rc=1, stderr message) OK"
 
+# 12) gyte-whisper-local deterministic contracts (OFFLINE)
+
+[[ -x "$ROOT/scripts/gyte-whisper-local" ]] || die "missing or not executable: scripts/gyte-whisper-local"
+
+# 12.1) --help contract (rc=0, output contains stable tokens)
+set +e
+"$ROOT/scripts/gyte-whisper-local" --help >"$TMPDIR_SMOKE/whisper_help.stdout" 2>"$TMPDIR_SMOKE/whisper_help.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-whisper-local --help, got rc=$RC"
+
+cat "$TMPDIR_SMOKE/whisper_help.stdout" "$TMPDIR_SMOKE/whisper_help.stderr" >"$TMPDIR_SMOKE/whisper_help.all" || true
+grep -q "Uso:" "$TMPDIR_SMOKE/whisper_help.all" || {
+  echo "[smoke] DEBUG: gyte-whisper-local --help output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/whisper_help.all" >&2 || true
+  die "expected 'Uso:' in gyte-whisper-local --help output"
+}
+grep -q -- "--backend" "$TMPDIR_SMOKE/whisper_help.all" || {
+  echo "[smoke] DEBUG: gyte-whisper-local --help output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/whisper_help.all" >&2 || true
+  die "expected '--backend' in gyte-whisper-local --help output"
+}
+ok "gyte-whisper-local: --help contract (rc=0, output ok) OK"
+
+# 12.2) no args -> usage, rc=2
+set +e
+"$ROOT/scripts/gyte-whisper-local" >"$TMPDIR_SMOKE/whisper_noargs.stdout" 2>"$TMPDIR_SMOKE/whisper_noargs.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || {
+  echo "[smoke] DEBUG: gyte-whisper-local (no args) stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/whisper_noargs.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-whisper-local (no args) stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/whisper_noargs.stderr" >&2 || true
+  die "expected rc=2 for gyte-whisper-local with no args, got rc=$RC"
+}
+
+cat "$TMPDIR_SMOKE/whisper_noargs.stdout" "$TMPDIR_SMOKE/whisper_noargs.stderr" >"$TMPDIR_SMOKE/whisper_noargs.all" || true
+grep -q "Uso:" "$TMPDIR_SMOKE/whisper_noargs.all" || {
+  echo "[smoke] DEBUG: gyte-whisper-local (no args) output:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/whisper_noargs.all" >&2 || true
+  die "expected 'Uso:' in gyte-whisper-local no-args output"
+}
+ok "gyte-whisper-local: no-args usage contract (rc=2, output has Uso:) OK"
+
+# 12.3) missing file -> rc=2, stderr mentions file not found
+set +e
+"$ROOT/scripts/gyte-whisper-local" "$TMPDIR_SMOKE/does-not-exist.wav" >"$TMPDIR_SMOKE/whisper_missing.stdout" 2>"$TMPDIR_SMOKE/whisper_missing.stderr"
+RC=$?
+set -e
+[[ "$RC" -eq 2 ]] || {
+  echo "[smoke] DEBUG: gyte-whisper-local missing-file stdout:" >&2
+  sed -n '1,120p' "$TMPDIR_SMOKE/whisper_missing.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-whisper-local missing-file stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/whisper_missing.stderr" >&2 || true
+  die "expected rc=2 for gyte-whisper-local missing file, got rc=$RC"
+}
+grep -Eqi "file non trovato|not found|missing" "$TMPDIR_SMOKE/whisper_missing.stderr" || {
+  echo "[smoke] DEBUG: gyte-whisper-local missing-file stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/whisper_missing.stderr" >&2 || true
+  die "expected 'file not found' message in gyte-whisper-local stderr"
+}
+ok "gyte-whisper-local: missing-file contract (rc=2, stderr message) OK"
+
 ok "SMOKE TEST PASSED"
