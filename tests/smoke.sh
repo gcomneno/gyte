@@ -490,11 +490,19 @@ set +e
 RC=$?
 set -e
 [[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-transcript --help, got rc=$RC"
-grep -q "gyte-transcript" "$TMPDIR_SMOKE/transcript_help.stdout" || {
+
+grep -q "^Uso:" "$TMPDIR_SMOKE/transcript_help.stdout" || {
   echo "[smoke] DEBUG: gyte-transcript --help stdout:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/transcript_help.stdout" >&2 || true
-  die "expected 'gyte-transcript' in gyte-transcript --help stdout"
+  die "expected '^Uso:' in gyte-transcript --help stdout"
 }
+
+grep -q "YT_TRANSCRIPT_LANGS" "$TMPDIR_SMOKE/transcript_help.stdout" || {
+  echo "[smoke] DEBUG: gyte-transcript --help stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_help.stdout" >&2 || true
+  die "expected 'YT_TRANSCRIPT_LANGS' in gyte-transcript --help stdout"
+}
+
 [[ ! -s "$TMPDIR_SMOKE/transcript_help.stderr" ]] || {
   echo "[smoke] DEBUG: gyte-transcript --help stderr:" >&2
   sed -n '1,200p' "$TMPDIR_SMOKE/transcript_help.stderr" >&2 || true
