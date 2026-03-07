@@ -84,8 +84,8 @@ cd gyte
 Dalla root del progetto:
 
 ```bash
-chmod +x install/install-gyte.sh
-./install/install-gyte.sh
+chmod +x install/gyte-install
+./install/gyte-install
 ```
 
 Di default gli script verranno symlinkati in:
@@ -97,9 +97,9 @@ $HOME/.local/bin
 Puoi scegliere una directory diversa usando:
 
 ```bash
-./install/install-gyte.sh --target-dir "/percorso/personalizzato"
+./install/gyte-install --prefix "/percorso/personalizzato"
 # oppure
-GYTE_INSTALL_DIR="/percorso/personalizzato" ./install/install-gyte.sh
+./install/gyte-install --prefix "/percorso/personalizzato"
 ```
 
 Assicurati che la directory scelta sia nel tuo `PATH`.  
@@ -144,12 +144,12 @@ L’installazione è locale all’utente, non richiede privilegi elevati e non m
 #### ✔ Installazione standard
 Dalla root del repository:
 ```bash
-./install/install-gyte.sh
+./install/gyte-install
 ```
 
 Questo installer:
-  - individua automaticamente tutti gli script `gyte-*` nella cartella `scripts/`,
-  - crea i symlink in `~/.local/bin` (o nella directory indicata in `$GYTE_INSTALL_DIR`),
+  - individua automaticamente tutti gli script `gyte-*` nella cartella `bin/`,
+  - crea i symlink in `~/.local/bin` (o nella directory indicata in `--prefix DIR`),
   - non usa `sudo` e non scrive fuori da `$HOME`,
   - non scarica né esegue codice remoto.
 
@@ -169,12 +169,11 @@ gyte-whisper-local
 #### ✔ Installazione in una directory scelta dall’utente
 Puoi scegliere una directory personalizzata, purché sia sotto `$HOME`:
 ```bash
-./install/install-gyte.sh --target-dir "$HOME/bin"
+./install/gyte-install --prefix "$HOME/bin"
 ```
 oppure tramite variabile d’ambiente:
 ```bash
-export GYTE_INSTALL_DIR="$HOME/bin"
-./install/install-gyte.sh
+./install/gyte-install --prefix "$HOME/bin"
 ```
 
 #### ⚠ Nota di sicurezza
