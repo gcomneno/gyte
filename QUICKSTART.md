@@ -79,7 +79,7 @@ gyte-whisper-local
 ## Installazione
 Metodo consigliato:
 ```bash
-./bin/gyte-install
+./install/gyte-install
 ```
 
 In alternativa, puoi usare i comandi direttamente da repo (scripts/ o bin/).
