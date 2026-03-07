@@ -41,7 +41,7 @@ need rm
 [[ -x "$ROOT/scripts/gyte-explain" ]] || die "missing or not executable: scripts/gyte-explain"
 [[ -x "$ROOT/scripts/gyte-lint" ]] || die "missing or not executable: scripts/gyte-lint"
 [[ -x "$ROOT/scripts/gyte-digest" ]] || die "missing or not executable: scripts/gyte-digest"
-[[ -x "$ROOT/scripts/gyte-install" ]] || die "missing or not executable: scripts/gyte-install"
+[[ -x "$ROOT/install/gyte-install" ]] || die "missing or not executable: install/gyte-install"
 [[ -x "$ROOT/scripts/gyte-transcript" ]] || die "missing or not executable: scripts/gyte-transcript"
 
 # Make repo commands available (still useful if some scripts call others).
@@ -424,7 +424,7 @@ fi
 
 # 7.1) --help contract
 set +e
-"$ROOT/scripts/gyte-install" --help >"$TMPDIR_SMOKE/install_help.stdout" 2>"$TMPDIR_SMOKE/install_help.stderr"
+"$ROOT/install/gyte-install" --help >"$TMPDIR_SMOKE/install_help.stdout" 2>"$TMPDIR_SMOKE/install_help.stderr"
 RC=$?
 set -e
 [[ "$RC" -eq 0 ]] || die "expected rc=0 for gyte-install --help, got rc=$RC"
@@ -443,7 +443,7 @@ ok "gyte-install: --help contract (rc=0, stdout ok, stderr empty) OK"
 # 7.2) --dry-run --prefix TMP (must not modify filesystem outside TMP; only prints)
 PFX="$TMPDIR_SMOKE/prefix"
 set +e
-"$ROOT/scripts/gyte-install" --dry-run --prefix "$PFX" >"$TMPDIR_SMOKE/install_dry.stdout" 2>"$TMPDIR_SMOKE/install_dry.stderr"
+"$ROOT/install/gyte-install" --dry-run --prefix "$PFX" >"$TMPDIR_SMOKE/install_dry.stdout" 2>"$TMPDIR_SMOKE/install_dry.stderr"
 RC=$?
 set -e
 [[ "$RC" -eq 0 ]] || {
@@ -465,7 +465,7 @@ ok "gyte-install: --dry-run contract (rc=0, stdout has dry-run + Installed, stde
 
 # 7.3) unknown arg -> rc=2 + usage on stderr
 set +e
-"$ROOT/scripts/gyte-install" --nope >"$TMPDIR_SMOKE/install_bad.stdout" 2>"$TMPDIR_SMOKE/install_bad.stderr"
+"$ROOT/install/gyte-install" --nope >"$TMPDIR_SMOKE/install_bad.stdout" 2>"$TMPDIR_SMOKE/install_bad.stderr"
 RC=$?
 set -e
 [[ "$RC" -eq 2 ]] || {
