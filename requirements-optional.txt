@@ -7,4 +7,4 @@ faster-whisper>=1.2.1,<2.0.0
 
 # Opzionale per gyte-digest su Linux con browser Chromium-based (Brave/Chrome/Chromium):
 # yt-dlp può aver bisogno di decifrare i cookie via keyring (Secret Service).
-secretstorage>=3.3.3,<4.0.0
+secretstorage>=3.5.0,<4.0.0
