@@ -160,6 +160,62 @@ cmd_version_line() {
   esac
 }
 
+yt_dlp_version_days_old() {
+  local version="$1"
+
+  if [[ ! "$version" =~ ^([0-9]{4})\.([0-9]{2})\.([0-9]{2})$ ]]; then
+    return 1
+  fi
+
+  local y="${BASH_REMATCH[1]}"
+  local m="${BASH_REMATCH[2]}"
+  local d="${BASH_REMATCH[3]}"
+
+  local release_epoch now_epoch
+  release_epoch="$(date -d "${y}-${m}-${d}" +%s 2>/dev/null || true)"
+  now_epoch="$(date +%s)"
+
+  [[ -n "$release_epoch" ]] || return 1
+
+  printf '%s\n' $(( (now_epoch - release_epoch) / 86400 ))
+}
+
+check_yt_dlp_freshness() {
+  local version
+  version="$(yt-dlp --version 2>/dev/null || true)"
+
+  if [[ -z "$version" ]]; then
+    return 0
+  fi
+
+  local age_days
+  age_days="$(yt_dlp_version_days_old "$version" || true)"
+
+  if [[ -z "$age_days" ]]; then
+    add_result \
+      "yt-dlp(version)" \
+      "info" \
+      0 \
+      "versione rilevata: $version"
+    return 0
+  fi
+
+  if [[ "$age_days" -gt 90 ]]; then
+    add_result \
+      "yt-dlp(freshness)" \
+      "warn" \
+      0 \
+      "yt-dlp $version sembra avere ${age_days} giorni: versioni vecchie possono causare HTTP 403, n challenge failures o formati mancanti su YouTube." \
+      "Se installato con pipx: pipx upgrade yt-dlp. Altrimenti: yt-dlp -U oppure aggiorna il metodo di installazione usato."
+  else
+    add_result \
+      "yt-dlp(freshness)" \
+      "ok" \
+      0 \
+      "yt-dlp $version sembra recente (${age_days} giorni)."
+  fi
+}
+
 check_cmd() {
   local name="$1"
   local required="$2"      # 0|1
@@ -223,7 +279,10 @@ check_executable_file "scripts/gyte-explain" "$ROOT/scripts/gyte-explain" 1 "Ver
 check_executable_file "scripts/gyte-lint" "$ROOT/scripts/gyte-lint" 1 "Verifica permessi e che il repo sia completo."
 
 # Core dependencies (ESSENZIALI)
-check_cmd "yt-dlp" 1 "Installazione: sudo apt install yt-dlp  (oppure: python3 -m pip install -U yt-dlp)"
+check_cmd "yt-dlp" 1 "Installazione consigliata: pipx install yt-dlp  (upgrade: pipx upgrade yt-dlp)"
+if [[ -n "$(cmd_path yt-dlp)" ]]; then
+  check_yt_dlp_freshness
+fi
 check_cmd "ffmpeg" 1 "Installazione: sudo apt install ffmpeg"
 check_cmd "curl" 1 "Installazione: sudo apt install curl"
 check_cmd "jq" 1 "Installazione: sudo apt install jq"
