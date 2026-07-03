@@ -15,16 +15,21 @@ set -euo pipefail
 usage() {
   cat >&2 << 'EOF'
 Uso:
-  gyte-video URL_YOUTUBE [ALTRI_ARG_YT_DLP...]
+  gyte-video [OPZIONI] URL_YOUTUBE [ALTRI_ARG_YT_DLP...]
 
 Esempi:
   gyte-video "https://www.youtube.com/watch?v=XXXX"
+  gyte-video --playlist-layout --archive downloaded.txt "https://www.youtube.com/playlist?list=PLXXXXX"
   GYTE_VIDEO_FORMAT=mkv gyte-video "https://www.youtube.com/watch?v=XXXX"
+
+Opzioni GYTE:
+  --playlist-layout     Usa cartella playlist + indice nel nome file.
+  --archive FILE        Usa FILE come archivio download per saltare elementi già scaricati.
 
 Note:
   - GYTE_VIDEO_FORMAT controlla il container di output (es. mp4, mkv, webm).
-  - Gli argomenti extra vengono passati a yt-dlp, con alcune opzioni pericolose
-    (exec/postprocessor) esplicitamente vietate.
+  - Gli argomenti extra dopo l'URL vengono passati a yt-dlp, con alcune opzioni
+    pericolose (exec/postprocessor) esplicitamente vietate.
 EOF
 }
 
@@ -34,17 +39,65 @@ if [[ "${1-}" == "-h" || "${1-}" == "--help" ]]; then
 fi
 
 if [ $# -lt 1 ]; then
-  echo "Uso: $0 URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
+  echo "Uso: $0 [OPZIONI] URL_YOUTUBE [ALTRI_ARG_YT_DLP...]" >&2
   echo "Esempio: $0 'https://www.youtube.com/watch?v=XXXX'" >&2
   exit 2
 fi
 
-URL="$1"
-shift || true
+URL=""
+PLAYLIST_LAYOUT=0
+ARCHIVE_FILE=""
+
+while (("$#")); do
+  case "$1" in
+    --playlist-layout)
+      PLAYLIST_LAYOUT=1
+      shift
+      ;;
+    --archive)
+      if [[ $# -lt 2 || -z "${2-}" ]]; then
+        echo "Errore: --archive richiede un file." >&2
+        exit 2
+      fi
+      ARCHIVE_FILE="$2"
+      shift 2
+      ;;
+    --archive=*)
+      ARCHIVE_FILE="${1#--archive=}"
+      if [[ -z "$ARCHIVE_FILE" ]]; then
+        echo "Errore: --archive richiede un file." >&2
+        exit 2
+      fi
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      URL="${1-}"
+      shift || true
+      break
+      ;;
+    -*)
+      # Manteniamo il contratto storico: una flag prima dell'URL viene trattata
+      # come URL errato, non come opzione yt-dlp.
+      URL="$1"
+      shift
+      break
+      ;;
+    *)
+      URL="$1"
+      shift
+      break
+      ;;
+  esac
+done
 
 if [ -z "$URL" ]; then
   echo "Errore: URL YouTube mancante." >&2
-  echo "Uso: gyte-video <URL YouTube>" >&2
+  echo "Uso: gyte-video [OPZIONI] <URL YouTube>" >&2
   exit 2
 fi
 
@@ -76,6 +129,18 @@ fi
 VIDEO_FORMAT="${GYTE_VIDEO_FORMAT:-mp4}"
 
 echo ">> Video container: $VIDEO_FORMAT"
+
+yt_output_template="%(uploader)s - %(title).80s [%(id)s].%(ext)s"
+if [[ "$PLAYLIST_LAYOUT" -eq 1 ]]; then
+  yt_output_template="%(playlist_title)s/%(playlist_index)03d - %(title).200B.%(ext)s"
+  echo ">> Playlist layout: enabled"
+fi
+
+gyte_args=()
+if [[ -n "$ARCHIVE_FILE" ]]; then
+  gyte_args+=( --download-archive "$ARCHIVE_FILE" )
+  echo ">> Download archive: $ARCHIVE_FILE"
+fi
 
 # Hardening sugli argomenti extra passati a yt-dlp
 # NON permettiamo opzioni che eseguono comandi o post-processor pericolosi.
@@ -125,8 +190,10 @@ yt-dlp \
   -f "bv*+ba/best" \
   --merge-output-format "$VIDEO_FORMAT" \
   --no-embed-subs \
-  -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
+  --continue \
+  -o "$yt_output_template" \
   "$URL" \
+  "${gyte_args[@]}" \
   "${safe_args[@]}"
 rc=$?
 set -e
