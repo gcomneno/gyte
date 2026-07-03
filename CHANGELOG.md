@@ -10,6 +10,24 @@ Formato:
 
 ---
 
+## v1.3.0 - 2026-07-03
+
+### Added
+- Added `gyte-video --playlist-layout` for playlist-title folders and indexed filenames.
+- Added `gyte-video --archive FILE` to skip already downloaded items through yt-dlp download archives.
+- Added resumable video downloads via `--continue`.
+- Added yt-dlp freshness diagnostics to `gyte-doctor`.
+
+### Changed
+- `gyte-video` now prints a human-friendly hint when yt-dlp fails with common YouTube download issues such as HTTP 403, n challenge failures, missing formats, or Forbidden errors.
+- Updated optional OpenAI dependency requirement.
+- Updated GitHub Actions checkout dependency.
+
+### Notes
+- This release was driven by a real-world 40-video playlist download failure caused by an outdated yt-dlp version.
+
+---
+
 ## v1.2.1 - 2026-02-06
 
 ### Added

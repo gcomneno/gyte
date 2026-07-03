@@ -379,6 +379,9 @@ Supporta anche playlist:
 
 ```bash
 gyte-video 'https://www.youtube.com/playlist?list=PLXXXXX'
+
+# Layout consigliato per playlist/corsi:
+gyte-video --playlist-layout --archive downloaded.txt 'https://www.youtube.com/playlist?list=PLXXXXX'
 ```
 
 ---
