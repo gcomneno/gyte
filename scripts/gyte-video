@@ -100,8 +100,26 @@ while (("$#")); do
   esac
 done
 
+print_yt_dlp_failure_hint() {
+  cat >&2 <<'EOF'
+
+Suggerimento GYTE:
+  yt-dlp è fallito. Se vedi errori come HTTP 403, n challenge failed,
+  missing formats o Forbidden, spesso la causa è yt-dlp obsoleto
+  oppure una variazione recente di YouTube.
+
+Azioni consigliate:
+  1. Esegui: gyte-doctor
+  2. Se yt-dlp è vecchio e lo hai installato con pipx:
+     pipx upgrade yt-dlp
+  3. Poi rilancia lo stesso comando gyte-video.
+
+EOF
+}
+
 # Scarica il miglior video+audio possibile e li unisce nel formato richiesto
 # (remux con ffmpeg, niente ricompressione se non necessario)
+set +e
 yt-dlp \
   --yes-playlist \
   -f "bv*+ba/best" \
@@ -110,3 +128,11 @@ yt-dlp \
   -o "%(uploader)s - %(title).80s [%(id)s].%(ext)s" \
   "$URL" \
   "${safe_args[@]}"
+rc=$?
+set -e
+
+if [[ $rc -ne 0 ]]; then
+  print_yt_dlp_failure_hint
+fi
+
+exit "$rc"
