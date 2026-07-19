@@ -1,5 +1,5 @@
 # Dipendenze opzionali per l'integrazione AI (gyte-openai)
-openai>=2.44.0,<3.0.0
+openai>=2.45.0,<3.0.0
 
 # STT opzionale per whisper-local fallback (backend: faster-whisper)
 # Nota: serve comunque ffmpeg installato a livello di sistema.
