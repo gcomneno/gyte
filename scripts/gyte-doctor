@@ -48,8 +48,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Resolve repo root from this script location.
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# Resolve repo root from the real script location, following symlinks.
+SCRIPT_PATH="$(readlink -f -- "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd -- "$(dirname -- "$SCRIPT_PATH")" && pwd -P)"
 ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd -P)"
 
 exit_code=0
