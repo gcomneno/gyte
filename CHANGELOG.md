@@ -10,6 +10,14 @@ Formato:
 
 ---
 
+## v1.3.1 - 2026-07-31
+
+### Fixed
+- Fixed `gyte-doctor` repository-root detection when invoked through symlinks installed in `~/.local/bin`.
+
+### Changed
+- Updated the optional OpenAI dependency requirement to `>=2.45.0,<3.0.0`.
+
 ## v1.3.0 - 2026-07-03
 
 ### Added
