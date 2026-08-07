@@ -333,6 +333,10 @@ done
 if [ "$success" -eq 0 ]; then
   echo "⚠️  Attenzione: yt-dlp non è riuscito a scaricare sottotitoli (normali né auto-sub) per (${LANGS_RAW:-<nessuna>})." >&2
   echo '      Suggerimento: YT_TRANSCRIPT_LANGS="en,en-orig" gyte-transcript "<URL_YT>"' >&2
+
+  # Nessun transcript è un fallimento operativo, non un successo vuoto.
+  # `set -e` propaga il codice non zero al chiamante.
+  false
 fi
 
 echo ">> Pulizia file .vtt -> .txt/.srt/.md (se presenti)..."

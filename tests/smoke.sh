@@ -9,7 +9,7 @@ set -euo pipefail
 #   - gyte-digest validation (browser whitelist, cookies fail-fast) via dry-run
 #   - gyte-lint --manifest contracts (stdlib only)
 #   - gyte-install (non-destructive, --dry-run only; CI-safe even if bin/ is generated)
-#   - gyte-transcript (offline: --help + --dry-run only)
+#   - gyte-transcript (offline: --help + deterministic failure contract)
 #
 # NOTE:
 # - Shellcheck gate is already enforced by the CI workflow step "Shellcheck scripts".
@@ -74,6 +74,52 @@ cleanup_smoke() {
 trap cleanup_smoke EXIT
 
 ANON="$TMPDIR_SMOKE/anon.cookies"
+
+# 0.0) gyte-transcript: nessun sottotitolo prodotto deve fallire.
+# Usa un yt-dlp finto per mantenere il test offline e deterministico.
+TRANSCRIPT_FAKE_BIN="$TMPDIR_SMOKE/transcript-fake-bin"
+TRANSCRIPT_OUT="$TMPDIR_SMOKE/transcript-out"
+mkdir -p "$TRANSCRIPT_FAKE_BIN" "$TRANSCRIPT_OUT"
+
+cat >"$TRANSCRIPT_FAKE_BIN/yt-dlp" <<'FAKEYTDLP'
+#!/usr/bin/env bash
+printf '%s\n' "simulated subtitle download failure" >&2
+false
+FAKEYTDLP
+chmod +x "$TRANSCRIPT_FAKE_BIN/yt-dlp"
+
+set +e
+(
+  PATH="$TRANSCRIPT_FAKE_BIN:$PATH" \
+  YT_TRANSCRIPT_LANGS="it" \
+  GYTE_YTDLP_QUIET="1" \
+    "$ROOT/scripts/gyte-transcript" \
+      --outdir "$TRANSCRIPT_OUT" \
+      "https://www.youtube.com/watch?v=offline-test"
+) >"$TMPDIR_SMOKE/transcript_failure.stdout" \
+  2>"$TMPDIR_SMOKE/transcript_failure.stderr"
+RC=$?
+set -e
+
+[[ "$RC" -eq 1 ]] || {
+  echo "[smoke] DEBUG: gyte-transcript failure stdout:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_failure.stdout" >&2 || true
+  echo "[smoke] DEBUG: gyte-transcript failure stderr:" >&2
+  sed -n '1,200p' "$TMPDIR_SMOKE/transcript_failure.stderr" >&2 || true
+  die "expected rc=1 when no transcript is produced, got rc=$RC"
+}
+
+grep -q "non è riuscito a scaricare sottotitoli" \
+  "$TMPDIR_SMOKE/transcript_failure.stderr" || {
+    echo "[smoke] DEBUG: gyte-transcript failure stderr:" >&2
+    sed -n '1,200p' "$TMPDIR_SMOKE/transcript_failure.stderr" >&2 || true
+    die "expected actionable no-subtitles diagnostic"
+  }
+
+[[ -z "$(find "$TRANSCRIPT_OUT" -maxdepth 1 -type f -name '*.txt' -print -quit)" ]] \
+  || die "gyte-transcript unexpectedly produced a transcript"
+
+ok "gyte-transcript: missing transcript returns rc=1"
 
 # 0.1) plain dry-run (no cookies) -> must succeed (rc=0)
 set +e
